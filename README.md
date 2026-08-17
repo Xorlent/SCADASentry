@@ -1,5 +1,5 @@
 ## SCADASentry — PoE Powered ESP32-P4 Honeypot
-Purpose-built Allen Bradley ControlLogix PLC network environment monitore with SNMP trap or SMTP alerting  
+Purpose-built Allen Bradley ControlLogix PLC network monitor with SNMP trap or SMTP alerting  
 ![SCADASentry Sensor Image](https://github.com/Xorlent/SCADASentry/blob/main/images/SCADASentry.jpg)
 ## Background
 This device extends the features of the [PoE Honeypot](https://github.com/Xorlent/PoE-Honeypot) project with purpose-built features for proactively monitoring an Allen Bradley ControlLogix PLC network environment.
