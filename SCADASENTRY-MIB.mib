@@ -1,0 +1,267 @@
+SCADASENTRY-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, NOTIFICATION-TYPE,
+    enterprises, Integer32, IpAddress
+        FROM SNMPv2-SMI
+    DisplayString, MacAddress
+        FROM SNMPv2-TC;
+
+scadaSentry MODULE-IDENTITY
+    LAST-UPDATED "202608160000Z"
+    ORGANIZATION "SCADASentry"
+    CONTACT-INFO "https://github.com/Xorlent/SCADASentry"
+    DESCRIPTION
+        "MIB for the SCADASentry Sensor. Defines the SNMPv2c
+         notification (trap) OIDs emitted by the device."
+    REVISION "202608160000Z"
+    DESCRIPTION "Initial version."
+    ::= { enterprises 99999 }
+
+-- Object identifier branches
+scadaSentryObjects       OBJECT IDENTIFIER ::= { scadaSentry 1 }
+scadaSentryNotifications OBJECT IDENTIFIER ::= { scadaSentry 0 }
+
+--
+-- Objects (varbind scalars)
+--
+
+honeypotSourceIp OBJECT-TYPE
+    SYNTAX      IpAddress
+    MAX-ACCESS  accessible-for-notify
+    STATUS      current
+    DESCRIPTION "Source IP address of the observed traffic."
+    ::= { scadaSentryObjects 1 }
+
+honeypotProtocol OBJECT-TYPE
+    SYNTAX      INTEGER {
+                    icmp(1),
+                    tcp(6),
+                    udp(17)
+                }
+    MAX-ACCESS  accessible-for-notify
+    STATUS      current
+    DESCRIPTION "IANA protocol number of the observed traffic."
+    ::= { scadaSentryObjects 2 }
+
+honeypotDestPort OBJECT-TYPE
+    SYNTAX      Integer32 (0..65535)
+    MAX-ACCESS  accessible-for-notify
+    STATUS      current
+    DESCRIPTION "Destination port of the observed traffic."
+    ::= { scadaSentryObjects 3 }
+
+honeypotServiceName OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..64))
+    MAX-ACCESS  accessible-for-notify
+    STATUS      current
+    DESCRIPTION "Service name associated with the observed port."
+    ::= { scadaSentryObjects 4 }
+
+honeypotIcmpType OBJECT-TYPE
+    SYNTAX      INTEGER {
+                    ping(8),
+                    pingExtended(42)
+                }
+    MAX-ACCESS  accessible-for-notify
+    STATUS      current
+    DESCRIPTION "ICMP type of the observed traffic."
+    ::= { scadaSentryObjects 5 }
+
+honeypotEventTime OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..32))
+    MAX-ACCESS  accessible-for-notify
+    STATUS      current
+    DESCRIPTION "Wall-clock event time in ISO 8601 UTC format."
+    ::= { scadaSentryObjects 19 }
+
+honeypotStartReason OBJECT-TYPE
+    SYNTAX      INTEGER {
+                    powerOn(1),
+                    linkUp(2)
+                }
+    MAX-ACCESS  accessible-for-notify
+    STATUS      current
+    DESCRIPTION "Reason the device came online."
+    ::= { scadaSentryObjects 20 }
+
+deviceIpAddress OBJECT-TYPE
+    SYNTAX      IpAddress
+    MAX-ACCESS  accessible-for-notify
+    STATUS      current
+    DESCRIPTION "IP address of a LAN-discovered device."
+    ::= { scadaSentryObjects 6 }
+
+deviceMacAddress OBJECT-TYPE
+    SYNTAX      MacAddress
+    MAX-ACCESS  accessible-for-notify
+    STATUS      current
+    DESCRIPTION "MAC address of a LAN-discovered device."
+    ::= { scadaSentryObjects 7 }
+
+deviceVendor OBJECT-TYPE
+    SYNTAX      Integer32 (0..65535)
+    MAX-ACCESS  accessible-for-notify
+    STATUS      current
+    DESCRIPTION "CIP vendor ID of a discovered ControlLogix device (e.g. 1 = Rockwell Automation)."
+    ::= { scadaSentryObjects 8 }
+
+deviceProductName OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..64))
+    MAX-ACCESS  accessible-for-notify
+    STATUS      current
+    DESCRIPTION "Product name of a discovered ControlLogix device."
+    ::= { scadaSentryObjects 9 }
+
+deviceFirmwareVersion OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..32))
+    MAX-ACCESS  accessible-for-notify
+    STATUS      current
+    DESCRIPTION "Firmware revision of a discovered ControlLogix device (e.g. 32.11)."
+    ::= { scadaSentryObjects 10 }
+
+deviceSerial OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..32))
+    MAX-ACCESS  accessible-for-notify
+    STATUS      current
+    DESCRIPTION "Serial number of a discovered ControlLogix device."
+    ::= { scadaSentryObjects 11 }
+
+deviceState OBJECT-TYPE
+    SYNTAX      INTEGER {
+                    nonexistent(0),
+                    selfTesting(1),
+                    standby(2),
+                    operational(3),
+                    majorRecoverableFault(4),
+                    majorUnrecoverableFault(5),
+                    communicationFault(6),
+                    unconfigured(7)
+                }
+    MAX-ACCESS  accessible-for-notify
+    STATUS      current
+    DESCRIPTION "CIP state of a discovered ControlLogix device."
+    ::= { scadaSentryObjects 12 }
+
+deviceMode OBJECT-TYPE
+    SYNTAX      INTEGER {
+                    program(0),
+                    run(1),
+                    testRemote(2)
+                }
+    MAX-ACCESS  accessible-for-notify
+    STATUS      current
+    DESCRIPTION "Run-switch mode of a discovered ControlLogix device."
+    ::= { scadaSentryObjects 13 }
+
+devicePreviousFirmwareVersion OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..32))
+    MAX-ACCESS  accessible-for-notify
+    STATUS      current
+    DESCRIPTION "Previous firmware revision before a change was detected."
+    ::= { scadaSentryObjects 14 }
+
+devicePreviousMode OBJECT-TYPE
+    SYNTAX      INTEGER {
+                    program(0),
+                    run(1),
+                    testRemote(2)
+                }
+    MAX-ACCESS  accessible-for-notify
+    STATUS      current
+    DESCRIPTION "Previous run-switch mode before a change was detected."
+    ::= { scadaSentryObjects 15 }
+
+deviceFirmwareVulnerable OBJECT-TYPE
+    SYNTAX      INTEGER {
+                    notVulnerable(0),
+                    vulnerable(1),
+                    unknown(2)
+                }
+    MAX-ACCESS  accessible-for-notify
+    STATUS      current
+    DESCRIPTION "Whether the current firmware is known to be vulnerable."
+    ::= { scadaSentryObjects 16 }
+
+-- Reserved object OIDs for future functionality:
+--   scadaSentryObjects 17-18 = reserved
+
+--
+-- Notifications (traps)
+--
+
+tcpConnectionTrap NOTIFICATION-TYPE
+    OBJECTS     { honeypotEventTime, honeypotSourceIp, honeypotProtocol,
+                  honeypotDestPort, honeypotServiceName }
+    STATUS      current
+    DESCRIPTION "A TCP connection was observed on a monitored port."
+    ::= { scadaSentryNotifications 1 }
+
+udpConnectionTrap NOTIFICATION-TYPE
+    OBJECTS     { honeypotEventTime, honeypotSourceIp, honeypotProtocol,
+                  honeypotDestPort, honeypotServiceName }
+    STATUS      current
+    DESCRIPTION "A UDP packet was observed on a monitored port."
+    ::= { scadaSentryNotifications 2 }
+
+icmpRequestTrap NOTIFICATION-TYPE
+    OBJECTS     { honeypotEventTime, honeypotSourceIp, honeypotProtocol,
+                  honeypotIcmpType, honeypotServiceName }
+    STATUS      current
+    DESCRIPTION "An ICMP request of a monitored type was observed."
+    ::= { scadaSentryNotifications 3 }
+
+ipFragmentTrap NOTIFICATION-TYPE
+    OBJECTS     { honeypotEventTime, honeypotSourceIp, honeypotProtocol,
+                  honeypotServiceName }
+    STATUS      current
+    DESCRIPTION "A fragmented IP packet was observed (suspicious)."
+    ::= { scadaSentryNotifications 4 }
+
+ipOptionsTrap NOTIFICATION-TYPE
+    OBJECTS     { honeypotEventTime, honeypotSourceIp, honeypotProtocol,
+                  honeypotServiceName }
+    STATUS      current
+    DESCRIPTION "An IP packet with options was observed (suspicious)."
+    ::= { scadaSentryNotifications 5 }
+
+deviceOnlineTrap NOTIFICATION-TYPE
+    OBJECTS     { honeypotEventTime, honeypotSourceIp, honeypotStartReason }
+    STATUS      current
+    DESCRIPTION "The device has come online (boot, power recovery, or connectivity recovery)."
+    ::= { scadaSentryNotifications 6 }
+
+newDeviceDiscoveredTrap NOTIFICATION-TYPE
+    OBJECTS     { honeypotEventTime, deviceIpAddress, deviceMacAddress,
+                  deviceVendor, deviceProductName, deviceFirmwareVersion,
+                  deviceSerial, deviceState, deviceMode }
+    STATUS      current
+    DESCRIPTION "A new device was discovered on the LAN."
+    ::= { scadaSentryNotifications 8 }
+
+deviceDisappearedTrap NOTIFICATION-TYPE
+    OBJECTS     { honeypotEventTime, deviceIpAddress, deviceMacAddress }
+    STATUS      current
+    DESCRIPTION "A previously-discovered device no longer responds to ping."
+    ::= { scadaSentryNotifications 9 }
+
+deviceModeChangedTrap NOTIFICATION-TYPE
+    OBJECTS     { honeypotEventTime, deviceIpAddress, deviceMacAddress,
+                  devicePreviousMode, deviceMode }
+    STATUS      current
+    DESCRIPTION "The run-switch mode of a ControlLogix device changed."
+    ::= { scadaSentryNotifications 10 }
+
+deviceFirmwareChangedTrap NOTIFICATION-TYPE
+    OBJECTS     { honeypotEventTime, deviceIpAddress, deviceMacAddress,
+                  devicePreviousFirmwareVersion, deviceFirmwareVersion,
+                  deviceFirmwareVulnerable }
+    STATUS      current
+    DESCRIPTION "The firmware revision of a ControlLogix device changed."
+    ::= { scadaSentryNotifications 11 }
+
+-- Reserved notification OIDs for future functionality:
+--   scadaSentryNotifications 7  = reserved (future "our device" trap)
+--   scadaSentryNotifications 12-13 = reserved
+
+END
