@@ -16,7 +16,7 @@ This device extends the features of the [PoE Honeypot](https://github.com/Xorlen
 5. An accessible NTP server for time synchronization
 
 ## Functional Description
-SCADASentry is a honeypot that listens on any number of user-configurable TCP and UDP ports and reports activity via **SNMPv2c traps** (or email via SMTP). It is designed to detect devices joining and leaving the local PLC LAN, alerts on scanning, reconnaissance, and lateral movement.  Additionally, SCADASentry reports basic ControlLogix device information and will notifies on run-key or firmware version change.
+SCADASentry is a honeypot that listens on any number of user-configurable TCP and UDP ports and reports activity via **SNMPv2c traps** (or email via SMTP). It is designed to detect devices joining and leaving the local PLC LAN, alerts on scanning, reconnaissance, and lateral movement.  Additionally, SCADASentry reports basic ControlLogix device information and will notify on run-key or firmware version change.
 
 When activity is detected, the device immediately sends a trap or email containing the source IP, protocol, destination port (or ICMP type), and service name. The following events are reported:
 
