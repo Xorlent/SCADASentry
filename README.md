@@ -16,9 +16,9 @@ This device extends the features of the [PoE Honeypot](https://github.com/Xorlen
 5. An accessible NTP server for time synchronization
 
 ## Functional Description
-SCADASentry is a honeypot that listens on any number of user-configurable TCP and UDP ports and reports activity via **SNMPv2c traps** (or email via SMTP). It is designed to detect devices joining and leaving the local PLC LAN, alerts on scanning, reconnaissance, and lateral movement, and notifies when the PLC run-key or firmware versions change.
+SCADASentry is a honeypot that listens on any number of user-configurable TCP and UDP ports and reports activity via **SNMPv2c traps** (or email via SMTP). It is designed to detect devices joining and leaving the local PLC LAN, alerts on scanning, reconnaissance, and lateral movement.  Additionally, SCADASentry reports basic ControlLogix device information and will notifies on run-key or firmware version change.
 
-When activity is detected, the device immediately sends a trap containing the source IP, protocol, destination port (or ICMP type), and service name. The following events are reported:
+When activity is detected, the device immediately sends a trap or email containing the source IP, protocol, destination port (or ICMP type), and service name. The following events are reported:
 
 | Event | Trap |
 |-------|------|
@@ -33,19 +33,19 @@ The device sends a `deviceOnlineTrap` when it boots (power recovery) or when its
 
 For Rockwell Automation / EtherNet/IP broadcast traffic, the device listens on UDP ports **44818** and **2222** and reports only `ListIdentity` browse/discovery traffic (encapsulation command `0x0063`), silently ignoring device I/O data. This detects RSLogix/RSLinx device browsing activity from unauthorized devices.
 
-The device also periodically scans the local LAN (every `LAN_SCAN_INTERVAL_SECONDS`, default 240s) using ARP to discover devices. Newly discovered devices are reported via `newDeviceDiscoveredTrap`, including the MAC address and — if the device responds on TCP 44818 — ControlLogix PLC identity, firmware, serial, state, and run-switch mode. Devices that stop responding to ARP are reported via `deviceDisappearedTrap` and removed from the tracked-IP holdoff list. Note that a departed device is detected only after its ARP entry expires (5 minutes), so `deviceDisappearedTrap` can lag a device's actual departure by up to 5 minutes. For discovered PLCs, the run-switch mode and firmware version are re-checked every Nth scan (default 1h) and reported via `deviceModeChangedTrap` / `deviceFirmwareChangedTrap` when they change.
+The device also periodically scans the local LAN (every `LAN_SCAN_INTERVAL_SECONDS`, default 240s) using ARP to discover devices. Newly discovered devices are reported via `newDeviceDiscoveredTrap`, including the MAC address and — if the device responds on TCP 44818 — ControlLogix PLC identity, firmware, serial, state, and run-switch mode. Devices that stop responding to ARP are reported via `deviceDisappearedTrap` and removed from the tracked-IP holdoff list.  Note that a departed device is detected only after its ARP entry expires (5 minutes), so `deviceDisappearedTrap` can lag a device's actual departure by up to 5 minutes.  For discovered PLCs, the run-switch mode and firmware version are re-checked every Nth scan (default 1h) and reported via `deviceModeChangedTrap` / `deviceFirmwareChangedTrap` when they change.
 
-The device can also be configured to alert on ICMP ping requests (note: it will not respond to pings when ICMP monitoring is enabled). It is reconfigurable via USB reflash.
+The device can also be configured to alert on ICMP ping requests (note: it will not respond to pings when ICMP monitoring is enabled).
 ## Programming
 ### Prepare configuration details for your device:  
 - Host name
 - Device IP address, gateway, and subnet mask
 - DNS servers (optional)
-- SNMP trap receiver IP and community string or SMTP relay IP
-- Email to and from addresses if email (USE_SMTP) is configured
+- SNMP trap receiver IP and community string if email (USE_SMTP) is _false_ (default)
+- Email to and from addresses and SMTP relay IP if email (USE_SMTP) is _true_
 - NTP server
-- TCP and/or UDP ports to listen on
-- LAN scan interval and excluded hosts (optional)
+- TCP and/or UDP ports to listen on (defaults are recommended)
+- LAN scan interval and hosts excluded from network scans (optional)
 ### Configure and flash the device:
 _Once you've successfully programmed a single unit, skip steps 1 & 2.  Repeating this process takes 3 minutes from start to finish._  
 1. [Set up your Arduino programming environment](https://github.com/Xorlent/SCADASentry/blob/main/ARDUINO-SETUP.md)
@@ -139,7 +139,6 @@ Every trap also carries the standard `sysUpTime.0` (TimeTicks) and `snmpTrapOID.
 - SMTP alerts require an unauthenticated SMTP relay that is configured to allow the SCADASentry device IP address.
 - TCP and UDP listening ports are fully user-configurable with no constraints.
 - It is recommended you exempt the SCADASentry device IP addresses in any legitimate vulnerability or network scanners to avoid triggering alerts.
-  - Alternatively, you can add your known scanner IP addresses to excludedHosts in Config.h
 - If ICMP is disabled in Config.h, the device will respond to pings from any IP address within the routable network.
 - LAN device discovery scans the local subnet using ARP, so it only sees devices on the same L2 segment (ARP doesn't cross routers).
 
