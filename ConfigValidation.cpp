@@ -150,15 +150,15 @@ bool validateConfiguration() {
   }
   
   // Validate holdoff values
-  if (TCP_HOLDOFF_SECONDS > 600) {
+  if (TCP_HOLDOFF_SECONDS > 3600) {
     Serial.println("WARNING: TCP_HOLDOFF_SECONDS excessively large (may miss events)");
     hasWarnings = true;
   }
-  if (UDP_HOLDOFF_SECONDS > 600) {
+  if (UDP_HOLDOFF_SECONDS > 3600) {
     Serial.println("WARNING: UDP_HOLDOFF_SECONDS excessively large (may miss events)");
     hasWarnings = true;
   }
-  if (ICMP_HOLDOFF_SECONDS > 600) {
+  if (ICMP_HOLDOFF_SECONDS > 3600) {
     Serial.println("WARNING: ICMP_HOLDOFF_SECONDS excessively large (may miss events)");
     hasWarnings = true;
   }
