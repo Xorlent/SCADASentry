@@ -158,6 +158,11 @@ const bool DEBUG = false;
     // (LAN_SCAN_INTERVAL_SECONDS * LAN_STATUS_CHECK_MULTIPLIER seconds)
     const uint16_t LAN_STATUS_CHECK_MULTIPLIER = 15;
 
+    // Quiet time (ms) between each ARP discovery request during a scan.
+    // Throttles the scan's impact on the network segment; increase to reduce
+    // load, decrease for faster scans. 0 disables the throttle.
+    const uint16_t LAN_SCAN_ARP_THROTTLE_MS = 100;
+
     // IP addresses to exclude from the LAN scan (in addition to this device's
     // network address, broadcast address, and default gateway, which are
     // always skipped).
