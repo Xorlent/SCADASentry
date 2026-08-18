@@ -57,6 +57,31 @@ static const char* eventTypeName(EventType t) {
   }
 }
 
+// Human-readable name for a ControlLogix run-switch mode
+static const char* deviceModeName(int32_t mode) {
+  switch (mode) {
+    case 0:  return "Program";
+    case 1:  return "Run";
+    case 2:  return "Test (Remote)";
+    default: return "Unknown";
+  }
+}
+
+// Human-readable name for a ControlLogix device state
+static const char* deviceStateName(uint8_t state) {
+  switch (state) {
+    case 0: return "Nonexistent";
+    case 1: return "Self-testing";
+    case 2: return "Standby";
+    case 3: return "Operational";
+    case 4: return "Major recoverable fault";
+    case 5: return "Major unrecoverable fault";
+    case 6: return "Communication fault";
+    case 7: return "Unconfigured";
+    default: return "Unknown";
+  }
+}
+
 // Constructor
 HoneypotLogging::HoneypotLogging(const uint8_t* hostName, IPAddress localIP, IPAddress snmpTrapSvr, uint16_t snmpTrapPt,
                                  const char* snmpCommunityStr,
@@ -777,6 +802,55 @@ void HoneypotLogging::sendNewDeviceTrap(IPAddress deviceIp, const uint8_t mac[6]
   strncpy(eventTimeStr, timeStr, sizeof(eventTimeStr) - 1);
   eventTimeStr[sizeof(eventTimeStr) - 1] = '\0';
 
+  // SMTP mode: send email notification instead
+  if (useSMTP) {
+    char subject[80];
+    snprintf(subject, sizeof(subject), "[%s Alert] New device discovered", (const char*)hostname);
+
+    char macStr[18];
+    snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+             (unsigned)mac[0], (unsigned)mac[1], (unsigned)mac[2],
+             (unsigned)mac[3], (unsigned)mac[4], (unsigned)mac[5]);
+
+    char body[512];
+    if (isPlc) {
+      snprintf(body, sizeof(body),
+               "Honeypot: %s (%d.%d.%d.%d)\n"
+               "Timestamp: %s UTC\n"
+               "Device IP: %d.%d.%d.%d\n"
+               "MAC: %s\n"
+               "Type: ControlLogix PLC\n"
+               "Product: %s\n"
+               "Firmware: %s\n"
+               "Serial: %s\n"
+               "State: %s\n"
+               "Mode: %s\n",
+               (const char*)hostname, honeypotIP[0], honeypotIP[1], honeypotIP[2], honeypotIP[3],
+               eventTimeStr,
+               deviceIp[0], deviceIp[1], deviceIp[2], deviceIp[3],
+               macStr,
+               productName, firmware, serial,
+               deviceStateName(state), deviceModeName(mode));
+    } else {
+      snprintf(body, sizeof(body),
+               "Honeypot: %s (%d.%d.%d.%d)\n"
+               "Timestamp: %s UTC\n"
+               "Device IP: %d.%d.%d.%d\n"
+               "MAC: %s\n"
+               "Type: Network device\n",
+               (const char*)hostname, honeypotIP[0], honeypotIP[1], honeypotIP[2], honeypotIP[3],
+               eventTimeStr,
+               deviceIp[0], deviceIp[1], deviceIp[2], deviceIp[3],
+               macStr);
+    }
+
+    if (debugMode) {
+      safePrintln("[DEBUG] Queueing new device email...");
+    }
+    queueEmail(subject, body);
+    return;
+  }
+
   uint8_t ipBytes[4] = { deviceIp[0], deviceIp[1], deviceIp[2], deviceIp[3] };
 
   SnmpVarbind varbinds[9];
@@ -862,6 +936,35 @@ void HoneypotLogging::sendDeviceGoneTrap(IPAddress deviceIp, const uint8_t mac[6
   strncpy(eventTimeStr, timeStr, sizeof(eventTimeStr) - 1);
   eventTimeStr[sizeof(eventTimeStr) - 1] = '\0';
 
+  // SMTP mode: send email notification instead
+  if (useSMTP) {
+    char subject[80];
+    snprintf(subject, sizeof(subject), "[%s Alert] Device disappeared", (const char*)hostname);
+
+    char macStr[18];
+    snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+             (unsigned)mac[0], (unsigned)mac[1], (unsigned)mac[2],
+             (unsigned)mac[3], (unsigned)mac[4], (unsigned)mac[5]);
+
+    char body[256];
+    snprintf(body, sizeof(body),
+             "Honeypot: %s (%d.%d.%d.%d)\n"
+             "Timestamp: %s UTC\n"
+             "Device IP: %d.%d.%d.%d\n"
+             "MAC: %s\n"
+             "Status: Device disappeared\n",
+             (const char*)hostname, honeypotIP[0], honeypotIP[1], honeypotIP[2], honeypotIP[3],
+             eventTimeStr,
+             deviceIp[0], deviceIp[1], deviceIp[2], deviceIp[3],
+             macStr);
+
+    if (debugMode) {
+      safePrintln("[DEBUG] Queueing device disappeared email...");
+    }
+    queueEmail(subject, body);
+    return;
+  }
+
   uint8_t ipBytes[4] = { deviceIp[0], deviceIp[1], deviceIp[2], deviceIp[3] };
 
   SnmpVarbind varbinds[3];
@@ -901,6 +1004,37 @@ void HoneypotLogging::sendDeviceModeChangeTrap(IPAddress deviceIp, const uint8_t
   const char* timeStr = ntpClient->formattedTime("%Y-%m-%dT%H:%M:%SZ");
   strncpy(eventTimeStr, timeStr, sizeof(eventTimeStr) - 1);
   eventTimeStr[sizeof(eventTimeStr) - 1] = '\0';
+
+  // SMTP mode: send email notification instead
+  if (useSMTP) {
+    char subject[80];
+    snprintf(subject, sizeof(subject), "[%s %s] Device mode changed",
+             (const char*)hostname, (mode == 1) ? "Notice" : "Alert");
+
+    char macStr[18];
+    snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+             (unsigned)mac[0], (unsigned)mac[1], (unsigned)mac[2],
+             (unsigned)mac[3], (unsigned)mac[4], (unsigned)mac[5]);
+
+    char body[256];
+    snprintf(body, sizeof(body),
+             "Honeypot: %s (%d.%d.%d.%d)\n"
+             "Timestamp: %s UTC\n"
+             "Device IP: %d.%d.%d.%d\n"
+             "MAC: %s\n"
+             "Mode: %s -> %s\n",
+             (const char*)hostname, honeypotIP[0], honeypotIP[1], honeypotIP[2], honeypotIP[3],
+             eventTimeStr,
+             deviceIp[0], deviceIp[1], deviceIp[2], deviceIp[3],
+             macStr,
+             deviceModeName(prevMode), deviceModeName(mode));
+
+    if (debugMode) {
+      safePrintln("[DEBUG] Queueing device mode change email...");
+    }
+    queueEmail(subject, body);
+    return;
+  }
 
   uint8_t ipBytes[4] = { deviceIp[0], deviceIp[1], deviceIp[2], deviceIp[3] };
 
@@ -954,6 +1088,36 @@ void HoneypotLogging::sendDeviceFirmwareChangeTrap(IPAddress deviceIp, const uin
   const char* timeStr = ntpClient->formattedTime("%Y-%m-%dT%H:%M:%SZ");
   strncpy(eventTimeStr, timeStr, sizeof(eventTimeStr) - 1);
   eventTimeStr[sizeof(eventTimeStr) - 1] = '\0';
+
+  // SMTP mode: send email notification instead
+  if (useSMTP) {
+    char subject[80];
+    snprintf(subject, sizeof(subject), "[%s Notice] Device firmware changed", (const char*)hostname);
+
+    char macStr[18];
+    snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+             (unsigned)mac[0], (unsigned)mac[1], (unsigned)mac[2],
+             (unsigned)mac[3], (unsigned)mac[4], (unsigned)mac[5]);
+
+    char body[256];
+    snprintf(body, sizeof(body),
+             "Honeypot: %s (%d.%d.%d.%d)\n"
+             "Timestamp: %s UTC\n"
+             "Device IP: %d.%d.%d.%d\n"
+             "MAC: %s\n"
+             "Firmware: %s -> %s\n",
+             (const char*)hostname, honeypotIP[0], honeypotIP[1], honeypotIP[2], honeypotIP[3],
+             eventTimeStr,
+             deviceIp[0], deviceIp[1], deviceIp[2], deviceIp[3],
+             macStr,
+             prevFirmware, firmware);
+
+    if (debugMode) {
+      safePrintln("[DEBUG] Queueing device firmware change email...");
+    }
+    queueEmail(subject, body);
+    return;
+  }
 
   uint8_t ipBytes[4] = { deviceIp[0], deviceIp[1], deviceIp[2], deviceIp[3] };
 

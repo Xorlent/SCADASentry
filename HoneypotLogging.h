@@ -68,7 +68,7 @@ struct IPLogEntry {
 // Email queue entry structure for async SMTP processing
 struct EmailQueueEntry {
   char subject[80];
-  char body[384];
+  char body[512];
 };
 
 // SNMP trap OID constants are defined in HoneypotLogging.cpp
