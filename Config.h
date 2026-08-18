@@ -49,18 +49,18 @@ const bool DEBUG = false;
     // SNMP trap configuration (used when USE_SMTP = false):
     const IPAddress snmpTrapSvr(192, 168, 1, 2); // Set SNMP trap receiver (NMS) IP address.
     const uint16_t snmpTrapPort = 162;      // Set SNMP trap receiver UDP port.
-    static const char* snmpCommunity = "public"; // SNMPv2c community string.
+    const char* const snmpCommunity = "public"; // SNMPv2c community string.
 
     // SMTP relay configuration (used when USE_SMTP = true):
     const IPAddress smtpServer(192, 168, 1, 25); // SMTP relay server IP address
     const uint16_t smtpPort = 25;          // SMTP relay port (usually 25)
-    static const char* smtpFromAddr = "honeypot@example.com";  // From email address
-    static const char* smtpToAddr = "security@example.com";    // To email address
+    const char* const smtpFromAddr = "honeypot@example.com";  // From email address
+    const char* const smtpToAddr = "security@example.com";    // To email address
 
     // NTP server configuration:
     // Select your NTP server info by configuring and uncommenting ONLY ONE line below:
     const IPAddress ntpSvr(192, 168, 1, 2);    // Set internal NTP server IP address.
-    //static const char* ntpSvr = "pool.ntp.org";   // Or set a NTP DNS server hostname.
+    //const char* const ntpSvr = "pool.ntp.org";   // Or set a NTP DNS server hostname.
 
 ////////// Monitoring Configuration //////////
 
