@@ -136,7 +136,7 @@ const bool DEBUG = false;
     // Prevents flooding the trap receiver with repeated events from the same IP
 
     // Maximum unique IPs to track per protocol
-    #define MAX_TRACKED_IPS 100
+    #define MAX_TRACKED_IPS 50
 
     // Holdoff time in seconds for each protocol (0 = disabled)
     const uint16_t TCP_HOLDOFF_SECONDS = 3600;
@@ -149,7 +149,7 @@ const bool DEBUG = false;
     // See README.md "SNMP Trap Reference" for the trap OIDs.
 
     // Maximum number of LAN devices to track
-    #define MAX_DEVICES 128
+    #define MAX_DEVICES 253
 
     // Interval between LAN scans, in seconds
     const uint32_t LAN_SCAN_INTERVAL_SECONDS = 240;
