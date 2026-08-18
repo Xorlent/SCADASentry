@@ -30,7 +30,7 @@ When activity is detected, the device immediately sends a trap containing the so
 
 The device sends a `deviceOnlineTrap` when it boots (power recovery) or when its Ethernet link recovers, with a `honeypotStartReason` varbind distinguishing the cause (`powerOn` vs `linkUp`).
 
-For Rockwell Automation / EtherNet/IP traffic, the device listens on UDP ports **44818** and **2222** and reports only `ListIdentity` browse/discovery traffic (encapsulation command `0x0063`), silently ignoring device I/O data. This detects RSLogix/RSLinx device browsing activity from unauthorized devices.
+For Rockwell Automation / EtherNet/IP broadcast traffic, the device listens on UDP ports **44818** and **2222** and reports only `ListIdentity` browse/discovery traffic (encapsulation command `0x0063`), silently ignoring device I/O data. This detects RSLogix/RSLinx device browsing activity from unauthorized devices.
 
 The device also periodically scans the local LAN (every `LAN_SCAN_INTERVAL_SECONDS`, default 240s) using ARP to discover devices. Newly discovered devices are reported via `newDeviceDiscoveredTrap`, including the MAC address and — if the device responds on TCP 44818 — ControlLogix PLC identity, firmware, serial, state, and run-switch mode. Devices that stop responding to ARP are reported via `deviceDisappearedTrap` and removed from the tracked-IP holdoff list. Note that a departed device is detected only after its ARP entry expires (5 minutes), so `deviceDisappearedTrap` can lag a device's actual departure by up to 5 minutes. For discovered PLCs, the run-switch mode and firmware version are re-checked every Nth scan (default 1h) and reported via `deviceModeChangedTrap` / `deviceFirmwareChangedTrap` when they change.
 
