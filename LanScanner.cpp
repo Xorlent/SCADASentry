@@ -121,6 +121,9 @@ void LanScanner::runScan() {
         }
       }
     }
+    // Quiet time between ARP discovery requests (network-impact throttle)
+    delay(LAN_SCAN_ARP_THROTTLE_MS);
+
     nextHost(ip);
   }
 
