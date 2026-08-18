@@ -110,7 +110,7 @@ const bool DEBUG = false;
 */
     // Common OT/SCADA UDP ports:
     const HoneypotPort honeypotUDPPorts[] = {
-        {123, "ntp"}, {502, "modbus"}, {2222, "rockwell-browse"}, {4840, "opcua"}, {44818, "rslogix-browse"}
+        {123, "ntp"}, {502, "modbus"}, {2222, "rockwell-browse"}, {4840, "opcua"}, {20000, "dnp3"}, {44818, "rslogix-browse"}
     };
 
     // Custom UDP ports (edit as needed):
@@ -122,7 +122,7 @@ const bool DEBUG = false;
 
     // Enable ICMP monitoring
     // Note: Enabling ICMP prevents device from responding to ICMP packets
-    const bool MONITOR_ICMP = false; // DO NOT SET THIS TO TRUE OR THE LAN SCANNER WILL NOT FUNCTION
+    const bool MONITOR_ICMP = false;
 
     // ICMP types to monitor
     // Echo request types (8 = Echo Request, 42 = Extended Echo Request)
