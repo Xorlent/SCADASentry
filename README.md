@@ -1,4 +1,4 @@
-## SCADASentry — PoE Powered ESP32-P4 Honeypot
+## SCADASentry — Low cost SCADA PLC Network Monitor
 Purpose-built Allen Bradley ControlLogix PLC network monitor with SNMP trap or SMTP alerting  
 ![SCADASentry Sensor Image](https://github.com/Xorlent/SCADASentry/blob/main/images/SCADASentry.jpg)
 ## Background
@@ -11,8 +11,9 @@ This device extends the features of the [PoE Honeypot](https://github.com/Xorlen
 ## Requirements
 1. M5Stack [Unit-PoE-P4](https://shop.m5stack.com/products/unit-poe-with-esp32-p4), currently $21.50 USD
 2. USB-C cable for programming
-3. An SNMP trap receiver (NMS such as PRTG) or an available SMTP relay
-4. The [ESP32ControlLogix](https://github.com/Xorlent/ESP32ControlLogix) Arduino library (for LAN device discovery)
+3. The [ESP32ControlLogix](https://github.com/Xorlent/ESP32ControlLogix) Arduino library (for LAN device discovery)
+4. An SNMP trap receiver (NMS such as PRTG) or an available SMTP relay
+5. An accessible NTP server for time synchronization
 
 ## Functional Description
 SCADASentry is a honeypot that listens on any number of user-configurable TCP and UDP ports and reports activity via **SNMPv2c traps** (or email via SMTP). It is designed to detect devices joining and leaving the local PLC LAN, alerts on scanning, reconnaissance, and lateral movement, and notifies when the PLC run-key or firmware versions change.
