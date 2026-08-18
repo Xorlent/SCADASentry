@@ -136,9 +136,10 @@ Every trap also carries the standard `sysUpTime.0` (TimeTicks) and `snmpTrapOID.
 
 ## Guidance and Limitations
 - The device produces SNMPv2c traps on UDP port 162 (community string configurable in Config.h).
-- SMTP alerts require an unauthenticated SMTP relay that is configured to allow the honeypot IP address.
+- SMTP alerts require an unauthenticated SMTP relay that is configured to allow the SCADASentry device IP address.
 - TCP and UDP listening ports are fully user-configurable with no constraints.
-- It is recommended you exempt your honeypot IP addresses in any legitimate vulnerability or network scanners to avoid triggering alerts.
+- It is recommended you exempt the SCADASentry device IP addresses in any legitimate vulnerability or network scanners to avoid triggering alerts.
+  - Alternatively, you can add your known scanner IP addresses to excludedHosts in Config.h
 - If ICMP is disabled in Config.h, the device will respond to pings from any IP address within the routable network.
 - LAN device discovery scans the local subnet using ARP, so it only sees devices on the same L2 segment (ARP doesn't cross routers).
 
