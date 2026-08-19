@@ -231,11 +231,11 @@ bool LanScanner::queryIdentityAttr(uint8_t attr, uint8_t* out, size_t* outLen) {
 
 // Query the run-switch mode via the symbolic tag ControllerInfo.Mode
 bool LanScanner::queryMode(int32_t& mode) {
-  clx::Status st = tag.read(tcp, session.handle(), "ControllerInfo.Mode", 1, MESSAGE_TIMEOUT_MS);
+  clx::Status st = tag.read(msg, tcp, session.handle(), "ControllerInfo.Mode", 1, MESSAGE_TIMEOUT_MS);
   if (st != clx::Status::Ok && st != clx::Status::Pending) return false;
 
   uint32_t start = millis();
-  while ((st = tag.poll()) == clx::Status::Pending) {
+  while ((st = tag.poll(msg)) == clx::Status::Pending) {
     if (millis() - start > MESSAGE_TIMEOUT_MS + 500) return false;
     delay(10);
   }
