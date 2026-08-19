@@ -149,7 +149,7 @@ const bool DEBUG = false;
     // See README.md "SNMP Trap Reference" for the trap OIDs.
 
     // Maximum number of LAN devices to track
-    #define MAX_DEVICES 253
+    #define MAX_DEVICES 252
 
     // Interval between LAN scans, in seconds
     const uint32_t LAN_SCAN_INTERVAL_SECONDS = 240;
