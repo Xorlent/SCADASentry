@@ -11,9 +11,8 @@ This device extends the features of the [PoE Honeypot](https://github.com/Xorlen
 ## Requirements
 1. M5Stack [Unit-PoE-P4](https://shop.m5stack.com/products/unit-poe-with-esp32-p4), currently $21.50 USD
 2. USB-C cable for programming
-3. The [ESP32ControlLogix](https://github.com/Xorlent/ESP32ControlLogix) Arduino library (for LAN device discovery)
-4. An SNMP trap receiver (NMS such as PRTG) or an available SMTP relay
-5. An accessible NTP server for time synchronization
+3. An SNMP trap receiver (NMS such as PRTG) or an available SMTP relay
+4. An accessible NTP server for time synchronization
 
 ## Functional Description
 SCADASentry is a honeypot that listens on any number of user-configurable TCP and UDP ports and reports activity via **SNMPv2c traps** (or email via SMTP). It is designed to detect devices joining and leaving the local PLC LAN, alerts on scanning, reconnaissance, and lateral movement.  Additionally, SCADASentry reports basic ControlLogix device information and will notify on run-key or firmware version change.
@@ -33,7 +32,7 @@ The device sends a `deviceOnlineTrap` when it boots (power recovery) or when its
 
 For Rockwell Automation / EtherNet/IP broadcast traffic, the device listens on UDP ports **44818** and **2222** and reports only `ListIdentity` browse/discovery traffic (encapsulation command `0x0063`), silently ignoring device I/O data. This detects RSLogix/RSLinx device browsing activity from unauthorized devices.
 
-The device also periodically scans the local LAN (every `LAN_SCAN_INTERVAL_SECONDS`, default 240s) using ARP to discover devices. Newly discovered devices are reported via `newDeviceDiscoveredTrap`, including the MAC address and — if the device responds on TCP 44818 — ControlLogix PLC identity, firmware, serial, state, and run-switch mode. Devices that stop responding to ARP are reported via `deviceDisappearedTrap` and removed from the tracked-IP holdoff list.  Note that a departed device is detected only after its ARP entry expires (5 minutes), so `deviceDisappearedTrap` can lag a device's actual departure by up to 5 minutes.  For discovered PLCs, the run-switch mode and firmware version are re-checked every Nth scan (default 1h) and reported via `deviceModeChangedTrap` / `deviceFirmwareChangedTrap` when they change.
+The device also periodically scans the local LAN (every `LAN_SCAN_INTERVAL_SECONDS`, default 240s) using ARP to discover devices. ControlLogix PLCs are identified via an EtherNet/IP `ListIdentity` broadcast and queried over TCP 44818 for their identity, firmware, serial, state, and run-switch mode. Newly discovered devices are reported via `newDeviceDiscoveredTrap`, including the MAC address and — for PLCs — the vendor, product name, firmware, serial, state, and run-switch mode. Devices that stop responding are reported via `deviceDisappearedTrap` and removed from the tracked-IP holdoff list.  Note that a departed device is detected only after its ARP entry expires (5 minutes), so `deviceDisappearedTrap` can lag a device's actual departure by up to 5 minutes.  For discovered PLCs, the run-switch mode and firmware version are re-checked every Nth scan (default 1h) and reported via `deviceModeChangedTrap` / `deviceFirmwareChangedTrap` when they change.
 
 The device can also be configured to alert on ICMP ping requests (note: it will not respond to pings when ICMP monitoring is enabled).
 ## Programming

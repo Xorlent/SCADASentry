@@ -31,7 +31,7 @@ struct HoneypotICMPType {
 const uint8_t hostName[] = "SCADASentry"; // Set hostname, no spaces, no domain name per RFC 3164
 
 // Debug mode - enables verbose serial output showing events and SNMP trap messages
-const bool DEBUG = false;
+const bool DEBUG = true;
 
 ////////// Network Configuration //////////
 
@@ -110,7 +110,7 @@ const bool DEBUG = false;
 */
     // Common OT/SCADA UDP ports:
     const HoneypotPort honeypotUDPPorts[] = {
-        {123, "ntp"}, {502, "modbus"}, {2222, "rockwell-browse"}, {4840, "opcua"}, {20000, "dnp3"}, {44818, "rslogix-browse"}
+        {502, "modbus"}, {2222, "rockwell-browse"}, {4840, "opcua"}, {20000, "dnp3"}, {44818, "rslogix-browse"}
     };
 
     // Custom UDP ports (edit as needed):

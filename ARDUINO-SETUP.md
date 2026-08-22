@@ -7,7 +7,3 @@
 5. Open the Libraries Manager
    - Type "NTP" in the search field and select "NTP by Stefan Staub"
      - Install version 1.8.0
-6. Install the ESP32ControlLogix library (not in the Libraries Manager):
-   - Download it from https://github.com/Xorlent/ESP32ControlLogix
-   - Copy the `ESP32ControlLogix` folder into your Arduino `libraries` directory
-   - Restart the Arduino IDE

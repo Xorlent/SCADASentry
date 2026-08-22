@@ -17,7 +17,7 @@
 #include <IPAddress.h>
 #include "Config.h"
 #include "HoneypotLogging.h"
-#include <ESP32ControlLogix.h>
+#include "ControlLogixDiscovery.h"
 
 // A discovered LAN device
 struct DeviceEntry {
@@ -62,20 +62,16 @@ private:
 
   uint32_t scanCount;
 
-  // CIP client objects (TcpConnection uses the existing ETH netif directly)
-  clx::TcpConnection tcp;
-  clx::Session session;
-  clx::ExplicitMessage msg;
-  clx::Tag tag;
+  // EtherNet/IP discovery client (ListIdentity broadcast + CIP reads)
+  ControlLogixDiscovery clx;
 
   // Helpers
   bool isExcluded(IPAddress ip);
   int findDevice(IPAddress ip);
   bool pingHost(IPAddress ip, uint32_t timeoutMs);
   bool getMac(IPAddress ip, uint8_t mac[6]);
-  bool queryIdentityAttr(uint8_t attr, uint8_t* out, size_t* outLen);
-  bool queryMode(int32_t& mode);
-  bool probePlc(IPAddress ip, DeviceEntry& dev);
+  void populatePlc(DeviceEntry& dev, const ClxDiscoveryResult& d);
+  void queryPlcMode(DeviceEntry& dev);
   void checkStatus(DeviceEntry& dev);
   void addDevice(const DeviceEntry& dev);
   void removeDevice(int index);

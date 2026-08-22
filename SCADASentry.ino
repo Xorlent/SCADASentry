@@ -355,17 +355,29 @@ static u8_t raw_recv_callback(void *arg, struct raw_pcb *pcb, struct pbuf *p, co
       // For EtherNet/IP ports, only report ListIdentity (browse) traffic;
       // ignore implicit I/O data (which lacks the 0x0063 command).
       if (dest_port == ENIP_PORT_44818 || dest_port == ENIP_PORT_2222) {
-        // Ensure at least 2 bytes of UDP payload are in the first pbuf
-        if (p->len < ip_header_len + sizeof(struct udp_hdr) + 2) {
+        // Ensure at least 4 bytes of UDP payload are in the first pbuf
+        // (encapsulation Command + Length fields)
+        if (p->len < ip_header_len + sizeof(struct udp_hdr) + 4) {
           pbuf_free(p);
           return 1;
         }
-        // Read the EtherNet/IP encapsulation Command field (first 2 bytes, big-endian)
+        // Read the EtherNet/IP encapsulation Command field (first 2 bytes, little-endian).
+        // NOTE: ControlLogixDiscovery.cpp reads/writes this header little-endian and
+        // works against real PLCs, so the on-wire order is little-endian here too.
         const u8_t* payload = (const u8_t*)p->payload + ip_header_len + sizeof(struct udp_hdr);
-        uint16_t command = (payload[0] << 8) | payload[1];
+        uint16_t command = payload[0] | (payload[1] << 8);
         if (command != ENIP_LIST_IDENTITY_CMD) {
           pbuf_free(p);
           return 1;  // Not a browse request; ignore I/O traffic
+        }
+        // A ListIdentity RESPONSE (Length > 0) answers our own discovery
+        // broadcast; pass it through to the normal UDP stack so the
+        // ControlLogixDiscovery client can receive it. A ListIdentity
+        // REQUEST (Length == 0) is browse traffic from another device,
+        // which we log and consume below.
+        uint16_t encapLength = payload[2] | (payload[3] << 8);
+        if (encapLength > 0) {
+          return 0;  // pass through (do NOT free the pbuf)
         }
       }
       
@@ -375,7 +387,16 @@ static u8_t raw_recv_callback(void *arg, struct raw_pcb *pcb, struct pbuf *p, co
       // Enqueue event for main loop processing
       // Filtering (broadcast/multicast/holdoff) happens in main loop
       logger.enqueueLogEvent(EVT_UDP_CONN, dest_port, sourceIPAddr, PROTO_UDP, IP_PROTO_UDP, getUDPServiceName(dest_port));
+      
+      // Consume the monitored-port packet
+      pbuf_free(p);
+      return 1;
     }
+    
+    // Not a monitored port: pass through so legitimate UDP traffic
+    // (e.g. NTP responses on the NTP client's ephemeral port) reaches the
+    // normal UDP stack.
+    return 0;
   }
   
   // Handle ICMP
@@ -485,7 +506,7 @@ void setup() {
   // Start NTP
   ntp.begin(ntpSvr);
   ntp.updateInterval(3600000);
-  
+  /*
   // Wait for initial NTP sync
   Serial.println("Waiting for NTP sync...");
   while(!ntp.update())
@@ -493,7 +514,7 @@ void setup() {
     Serial.println("NTP retry...");
     delay(500);
   };
-
+*/
   lastNTP = millis();
   Serial.print("NTP synchronized: ");
   Serial.print(ntp.formattedTime("%b %d %T "));
