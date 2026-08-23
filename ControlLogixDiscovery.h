@@ -13,9 +13,10 @@
 //                   (Connection Manager service 0x52) that wraps a
 //                   Get Attributes All (0x01) / Get Attribute Single (0x0E)
 //
-// The CPU is assumed to be in slot 0 of the backplane. Ethernet modules are
-// located by scanning slots 1..16 for modules whose Identity "device type"
-// is 0x0C (Communications Adapter).
+// The CPU is assumed to be in slot 0 of the backplane. Additional CPU modules
+// (redundant controllers) and Ethernet modules are located by scanning slots
+// 1..16 for modules whose Identity "device type" is 0x0E (PLC) or 0x0C
+// (Communications Adapter).
 //
 
 #include <WiFi.h>
@@ -35,12 +36,14 @@ struct ClxDiscoveryResult {
     uint8_t   state;
 };
 
-// An Ethernet module found in the rack.
-struct ClxEthernetModule {
-    uint8_t slot;
-    String  productName;
-    uint8_t majorRevision;
-    uint8_t minorRevision;
+// A CPU or Ethernet module found in the rack.
+struct ClxModule {
+    uint8_t  slot;
+    uint16_t deviceType;    // 0x0E = CPU, 0x0C = Ethernet module
+    String   productName;
+    uint8_t  majorRevision;
+    uint8_t  minorRevision;
+    bool     isRun;         // run key status (CPU only; false for Ethernet)
 };
 
 // Full information gathered for one PLC.
@@ -53,7 +56,7 @@ struct ClxPlcInfo {
     bool      isRun;              // true when the keyswitch is in RUN or REMOTE RUN
     uint8_t   cpuMajorRevision;
     uint8_t   cpuMinorRevision;
-    std::vector<ClxEthernetModule> ethernetModules;
+    std::vector<ClxModule> modules;
 };
 
 class ControlLogixDiscovery {

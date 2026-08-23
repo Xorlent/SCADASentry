@@ -27,6 +27,7 @@ static const uint16_t ITEM_UNCONNECTED_DATA = 0x00B2;  // SendRRData unconnected
 
 // CIP device types
 static const uint16_t DEVICE_TYPE_COMM_ADAPTER = 0x0C; // Communications Adapter (Ethernet module)
+static const uint16_t DEVICE_TYPE_PLC           = 0x0E; // Programmable Logic Controller (CPU)
 
 // CIP response service flag (set in the service byte of a reply).
 static const uint8_t CIP_RESPONSE_BIT = 0x80;
@@ -441,7 +442,8 @@ bool ControlLogixDiscovery::getPlcInfo(const IPAddress& ip, ClxPlcInfo& info, ui
     String cpuName;
     uint8_t major = 0, minor = 0;
     uint16_t statusWord = 0;
-    if (!readIdentity(0, cpuName, major, minor, &statusWord, nullptr, timeoutMs)) {
+    uint16_t slot0Type = 0;
+    if (!readIdentity(0, cpuName, major, minor, &statusWord, &slot0Type, timeoutMs)) {
         unregisterSession();
         _client.stop();
         return false;
@@ -464,25 +466,38 @@ bool ControlLogixDiscovery::getPlcInfo(const IPAddress& ip, ClxPlcInfo& info, ui
         info.keyswitch = "UNKNOWN";
     }
 
+    // Add the slot 0 CPU to the module list.
+    ClxModule cpuMod;
+    cpuMod.slot          = 0;
+    cpuMod.deviceType    = slot0Type;
+    cpuMod.productName   = cpuName;
+    cpuMod.majorRevision = major;
+    cpuMod.minorRevision = minor;
+    cpuMod.isRun         = info.isRun;
+    info.modules.push_back(cpuMod);
+
     // --- Hostname (TCP/IP Interface object, attribute 6) ---
     readHostname(info.hostname, timeoutMs);   // best-effort; may be empty
 
     // --- Program name (Program Name object 0x64) ---
     readProgramName(info.programName, timeoutMs);   // best-effort; may be empty
 
-    // --- Scan slots 1..16 for Ethernet modules ---
+    // --- Scan slots 1..16 for additional CPUs and Ethernet modules ---
     for (uint8_t slot = 1; slot <= MAX_SLOT; slot++) {
         String name;
         uint8_t m = 0, mn = 0;
         uint16_t dt = 0;
-        if (readIdentity(slot, name, m, mn, nullptr, &dt, timeoutMs)) {
-            if (dt == DEVICE_TYPE_COMM_ADAPTER) {   // Communications Adapter (Ethernet module)
-                ClxEthernetModule mod;
-                mod.slot = slot;
-                mod.productName = name;
+        uint16_t sw = 0;
+        if (readIdentity(slot, name, m, mn, &sw, &dt, timeoutMs)) {
+            if (dt == DEVICE_TYPE_COMM_ADAPTER || dt == DEVICE_TYPE_PLC) {
+                ClxModule mod;
+                mod.slot          = slot;
+                mod.deviceType    = dt;
+                mod.productName   = name;
                 mod.majorRevision = m;
                 mod.minorRevision = mn;
-                info.ethernetModules.push_back(mod);
+                mod.isRun         = (dt == DEVICE_TYPE_PLC) && ((sw & 0xFF) == KEYSWITCH_RUN);
+                info.modules.push_back(mod);
             }
         }
     }

@@ -50,6 +50,115 @@ static const ClxDiscoveryResult* findDiscovered(const std::vector<ClxDiscoveryRe
   return nullptr;
 }
 
+// Tenable CVE search URL components (constant prefix/suffix).
+static const char* TENABLE_URL_PREFIX   = "https://www.tenable.com/cve/search?q=controllogix+AND+";
+static const char* TENABLE_URL_SUFFIX   = "&sort=newest";
+static const char* TENABLE_URL_FALLBACK = "https://www.tenable.com/cve/search?q=controllogix&sort=newest";
+
+// Extract the Tenable search term from a ControlLogix device type and product
+// name. CPU (0x0E): the space-delimited string of numbers (e.g. "5561").
+// Ethernet module (0x0C): the three characters after '-' (e.g. "ENB").
+// Returns an empty string when no term can be extracted. The result is capped
+// at 7 characters to fit the 8-byte searchTerm buffer.
+static String tenableSearchTerm(uint16_t deviceType, const String& productName) {
+  String searchResult;
+
+  if (deviceType == 0x0E) {
+    // CPU: find the space-delimited string of numbers in the product name.
+    // e.g. "1756-L61 ControlLogix 5561 Controller" -> "5561"
+    int start = 0;
+    int len = productName.length();
+    while (start < len) {
+      while (start < len && productName[start] == ' ') start++;   // skip spaces
+      int end = start;
+      while (end < len && productName[end] != ' ') end++;          // end of token
+      String token = productName.substring(start, end);
+      bool allDigits = token.length() > 0;
+      for (unsigned int i = 0; i < token.length(); i++) {
+        char c = token[i];
+        if (c < '0' || c > '9') { allDigits = false; break; }
+      }
+      if (allDigits) { searchResult = token; break; }
+      start = end;
+    }
+  } else if (deviceType == 0x0C) {
+    // Ethernet module: remove spaces, then take the three characters after '-'.
+    // e.g. "1756-ENBT/A ..." -> "ENB"
+    String noSpaces = productName;
+    noSpaces.replace(" ", "");
+    int dash = noSpaces.indexOf('-');
+    if (dash >= 0 && (dash + 3) < (int)noSpaces.length()) {
+      searchResult = noSpaces.substring(dash + 1, dash + 4);
+    }
+  }
+
+  // Cap at 7 characters (fits the 8-byte searchTerm buffer).
+  if (searchResult.length() > 7) {
+    searchResult = searchResult.substring(0, 7);
+  }
+  return searchResult;
+}
+
+// Build the full Tenable CVE search URL from a search term.
+static String tenableURL(const String& searchTerm) {
+  if (searchTerm.length() == 0) {
+    return String(TENABLE_URL_FALLBACK);
+  }
+  return String(TENABLE_URL_PREFIX) + searchTerm + String(TENABLE_URL_SUFFIX);
+}
+
+// Build the per-module list (CPU + Ethernet modules) for a PLC from getPlcInfo
+// results, computing each module's Tenable search term. Returns the number of
+// modules stored (capped at MAX_MODULES_PER_PLC).
+static uint8_t buildModules(DeviceModule* out, const ClxPlcInfo& info) {
+  uint8_t count = 0;
+  for (size_t i = 0; i < info.modules.size() && count < MAX_MODULES_PER_PLC; i++) {
+    const ClxModule& m = info.modules[i];
+    DeviceModule& dm = out[count];
+    dm.slot = m.slot;
+    dm.deviceType = m.deviceType;
+    dm.isRun = m.isRun;
+    dm.majorRevision = m.majorRevision;
+    dm.minorRevision = m.minorRevision;
+    String term = tenableSearchTerm(m.deviceType, m.productName);
+    strncpy(dm.searchTerm, term.c_str(), sizeof(dm.searchTerm) - 1);
+    dm.searchTerm[sizeof(dm.searchTerm) - 1] = '\0';
+    count++;
+  }
+  return count;
+}
+
+// Compare two module lists for change detection.
+static bool modulesEqual(const DeviceModule* a, uint8_t na,
+                         const DeviceModule* b, uint8_t nb) {
+  if (na != nb) return false;
+  for (uint8_t i = 0; i < na; i++) {
+    if (a[i].slot != b[i].slot ||
+        a[i].deviceType != b[i].deviceType ||
+        a[i].isRun != b[i].isRun ||
+        a[i].majorRevision != b[i].majorRevision ||
+        a[i].minorRevision != b[i].minorRevision ||
+        strcmp(a[i].searchTerm, b[i].searchTerm) != 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Print the Tenable URL for each detected module (debug), with slot, name and
+// firmware revision.
+static void printModuleUrls(HoneypotLogging* logger, const ClxPlcInfo& info) {
+  for (size_t i = 0; i < info.modules.size(); i++) {
+    const ClxModule& m = info.modules[i];
+    String url = tenableURL(tenableSearchTerm(m.deviceType, m.productName));
+    char buf[256];
+    snprintf(buf, sizeof(buf), "[DEBUG] Tenable URL slot %u (%s) fw %u.%u: %s",
+             (unsigned)m.slot, m.productName.c_str(),
+             (unsigned)m.majorRevision, (unsigned)m.minorRevision, url.c_str());
+    logger->safePrintln(buf);
+  }
+}
+
 LanScanner::LanScanner(HoneypotLogging* logger, IPAddress localIP, IPAddress gateway, IPAddress subnetMask)
     : logger(logger), localIP(localIP), gateway(gateway), subnetMask(subnetMask) {
   deviceCount = 0;
@@ -68,6 +177,7 @@ void LanScanner::begin() {
     devices[i].hasMac = false;
     devices[i].isPlc = false;
     devices[i].hasStatus = false;
+    devices[i].moduleCount = 0;
   }
 }
 
@@ -113,6 +223,7 @@ void LanScanner::runScan() {
         dev.hasMac = hasMac;
         dev.isPlc = false;
         dev.hasStatus = false;
+        dev.moduleCount = 0;
         dev.lastSeen = millis();
         dev.lastStatusCheck = 0;
 
@@ -186,6 +297,7 @@ void LanScanner::runScan() {
       memset(dev.mac, 0, 6);
       dev.hasMac = false;
       dev.isPlc = true;
+      dev.moduleCount = 0;
       populatePlc(dev, discovered[i]);
       queryPlcMode(dev);
       dev.hasStatus = true;
@@ -290,18 +402,21 @@ void LanScanner::populatePlc(DeviceEntry& dev, const ClxDiscoveryResult& d) {
   snprintf(dev.serial, sizeof(dev.serial), "%lu", (unsigned long)d.serialNumber);
   dev.state = d.state;
   dev.mode = -1;
+  dev.moduleCount = 0;   // populated by queryPlcMode() via getPlcInfo()
 }
 
-// Query the run-switch keyswitch position (mode) for a PLC.
+// Query the run-switch keyswitch position (mode) and module list for a PLC.
 void LanScanner::queryPlcMode(DeviceEntry& dev) {
   ClxPlcInfo info;
   if (clx.getPlcInfo(dev.ip, info, PLC_INFO_TIMEOUT_MS)) {
     dev.mode = keyswitchToMode(info.keyswitch, info.isRun);
+    dev.moduleCount = buildModules(dev.modules, info);
     if (DEBUG) {
       char buf[64];
       snprintf(buf, sizeof(buf), "[DEBUG] PLC %d.%d.%d.%d %s",
                dev.ip[0], dev.ip[1], dev.ip[2], dev.ip[3], modeName(dev.mode));
       logger->safePrintln(buf);
+      printModuleUrls(logger, info);
     }
   } else {
     dev.mode = -1;
@@ -309,7 +424,7 @@ void LanScanner::queryPlcMode(DeviceEntry& dev) {
   clx.disconnect();
 }
 
-// Re-query a PLC's firmware and mode, emitting traps on change
+// Re-query a PLC's firmware, mode and modules, emitting traps on change
 void LanScanner::checkStatus(DeviceEntry& dev) {
   ClxPlcInfo info;
   if (!clx.getPlcInfo(dev.ip, info, PLC_INFO_TIMEOUT_MS)) {
@@ -320,6 +435,11 @@ void LanScanner::checkStatus(DeviceEntry& dev) {
   char freshFirmware[16];
   snprintf(freshFirmware, sizeof(freshFirmware), "%u.%u", info.cpuMajorRevision, info.cpuMinorRevision);
   int32_t freshMode = keyswitchToMode(info.keyswitch, info.isRun);
+
+  // Build the fresh module list for change detection.
+  DeviceModule freshModules[MAX_MODULES_PER_PLC];
+  uint8_t freshCount = buildModules(freshModules, info);
+
   clx.disconnect();
 
   // Firmware change
@@ -345,6 +465,17 @@ void LanScanner::checkStatus(DeviceEntry& dev) {
     logger->sendDeviceModeChangeTrap(dev.ip, dev.mac, dev.mode, freshMode);
     dev.prevMode = dev.mode;
     dev.mode = freshMode;
+  }
+
+  // CPU/Ethernet module change
+  if (!modulesEqual(freshModules, freshCount, dev.modules, dev.moduleCount)) {
+    dev.moduleCount = freshCount;
+    for (uint8_t i = 0; i < freshCount; i++) {
+      dev.modules[i] = freshModules[i];
+    }
+    if (DEBUG) {
+      printModuleUrls(logger, info);
+    }
   }
 
   dev.lastStatusCheck = millis();

@@ -19,6 +19,19 @@
 #include "HoneypotLogging.h"
 #include "ControlLogixDiscovery.h"
 
+// Maximum number of CPU/Ethernet modules tracked per PLC (CPU + up to 5 more).
+#define MAX_MODULES_PER_PLC 6
+
+// A single detected CPU or Ethernet module within a PLC.
+struct DeviceModule {
+  uint8_t  slot;           // 0 = CPU, 1..16 = Ethernet module / secondary CPU
+  uint16_t deviceType;     // 0x0E = CPU, 0x0C = Ethernet module
+  char     searchTerm[8];  // extracted Tenable search term (max 7 chars + NUL)
+  bool     isRun;          // run key status (CPU only; false for Ethernet)
+  uint8_t  majorRevision;  // firmware major revision
+  uint8_t  minorRevision;  // firmware minor revision
+};
+
 // A discovered LAN device
 struct DeviceEntry {
   IPAddress ip;
@@ -32,6 +45,9 @@ struct DeviceEntry {
   char serial[16];
   uint8_t state;
   int32_t mode;
+  // Detected CPU/Ethernet modules (valid when isPlc)
+  DeviceModule modules[MAX_MODULES_PER_PLC];
+  uint8_t moduleCount;
   // Previous values for change detection
   char prevFirmware[16];
   int32_t prevMode;
