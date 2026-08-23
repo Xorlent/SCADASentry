@@ -91,8 +91,21 @@ static size_t writeInteger(uint8_t* buf, int32_t value) {
       len++;
     }
   } else {
-    content[0] = 0xFF;
-    len = 1;
+    // Negative: minimal two's-complement encoding.
+    int32_t v = value;
+    uint8_t tmp[5];
+    int n = 0;
+    do {
+      tmp[n++] = (uint8_t)(v & 0xFF);
+      v >>= 8;   // arithmetic shift (sign-extends)
+    } while (v != -1);
+    for (int i = n - 1; i >= 0; i--) content[len++] = tmp[i];
+    // Ensure the most-significant bit is set (negative).
+    if (!(content[0] & 0x80)) {
+      memmove(content + 1, content, len);
+      content[0] = 0xFF;
+      len++;
+    }
   }
   buf[0] = TAG_INTEGER;
   size_t l = berLength(buf + 1, len);
@@ -212,7 +225,13 @@ bool sendSNMPv2cTrap(WiFiUDP& udp, IPAddress receiver, uint16_t port,
       default:
         return false; // Unsupported value type
     }
+    if (clen > sizeof(content)) {
+      return false; // varbind content too large
+    }
     size_t vblen = writeSequence(vb, content, clen);
+    if (vblLen + vblen > sizeof(vbl)) {
+      return false; // varbind list too large
+    }
     memcpy(vbl + vblLen, vb, vblen);
     vblLen += vblen;
   }
@@ -239,6 +258,9 @@ bool sendSNMPv2cTrap(WiFiUDP& udp, IPAddress receiver, uint16_t port,
   size_t msgContentLen = 0;
   msgContentLen += writeInteger(msgContent + msgContentLen, 1);  // SNMPv2c version = 1
   msgContentLen += writeOctetString(msgContent + msgContentLen, (const uint8_t*)community, strlen(community));
+  if (msgContentLen + pduTlvLen > sizeof(msgContent)) {
+    return false; // message too large
+  }
   memcpy(msgContent + msgContentLen, pduTlv, pduTlvLen);
   msgContentLen += pduTlvLen;
 

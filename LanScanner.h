@@ -53,9 +53,10 @@ struct DeviceEntry {
   char prevFirmware[16];
   int32_t prevMode;
   bool hasStatus;       // has status been queried at least once?
-  // Timing
-  uint32_t lastSeen;    // millis() of last successful ping
-  uint32_t lastStatusCheck; // millis() of last status query
+  // Timing (microseconds since boot via esp_timer_get_time(); int64_t so it
+  // never wraps in practice)
+  int64_t lastSeen;    // last successful ping
+  int64_t lastStatusCheck; // last status query
 };
 
 class LanScanner {

@@ -128,6 +128,12 @@ HoneypotLogging::HoneypotLogging(const uint8_t* hostName, IPAddress localIP, IPA
   // Initialize SMTP async task members
   emailQueue = NULL;
   smtpTaskHandle = NULL;
+  
+  // Initialize mutex handles (created later in begin())
+  serialMutex = NULL;
+  trapMutex = NULL;
+  gatewayMutex = NULL;
+  holdoffMutex = NULL;
 }
 
 // Destructor - cleanup FreeRTOS resources
@@ -149,6 +155,24 @@ HoneypotLogging::~HoneypotLogging() {
     vSemaphoreDelete(serialMutex);
     serialMutex = NULL;
   }
+  
+  // Delete trap mutex if created
+  if (trapMutex != NULL) {
+    vSemaphoreDelete(trapMutex);
+    trapMutex = NULL;
+  }
+  
+  // Delete gateway-change mutex if created
+  if (gatewayMutex != NULL) {
+    vSemaphoreDelete(gatewayMutex);
+    gatewayMutex = NULL;
+  }
+  
+  // Delete holdoff mutex if created
+  if (holdoffMutex != NULL) {
+    vSemaphoreDelete(holdoffMutex);
+    holdoffMutex = NULL;
+  }
 }
 
 // Initialize logging system
@@ -161,6 +185,9 @@ void HoneypotLogging::begin() {
 
   // Create mutex guarding temporary default-gateway changes
   gatewayMutex = xSemaphoreCreateMutex();
+
+  // Create mutex guarding the holdoff tracking arrays
+  holdoffMutex = xSemaphoreCreateMutex();
   
   // Initialize IP tracking arrays
   for(int i = 0; i < MAX_TRACKED_IPS; i++) {
@@ -478,6 +505,12 @@ bool HoneypotLogging::shouldLogEvent(uint32_t ip, ProtocolType protocol) {
   unsigned long currentTime = millis();
   unsigned long holdoffMillis = (unsigned long)holdoffSeconds * 1000;
   
+  // Serialize access to the holdoff arrays (shared with the scanner task's
+  // removeIPFromHoldoff and the main loop's resetHoldoff).
+  xSemaphoreTake(holdoffMutex, portMAX_DELAY);
+  
+  bool result = true;
+  
   // Search for IP in tracking array
   for(int i = 0; i < MAX_TRACKED_IPS; i++) {
     if(logArray[i].ip == ip) {
@@ -485,11 +518,13 @@ bool HoneypotLogging::shouldLogEvent(uint32_t ip, ProtocolType protocol) {
       if(currentTime - logArray[i].lastLogTime >= holdoffMillis) {
         // Update timestamp and allow logging
         logArray[i].lastLogTime = currentTime;
-        return true;
+        result = true;
       } else {
         // Still in holdoff period
-        return false;
+        result = false;
       }
+      xSemaphoreGive(holdoffMutex);
+      return result;
     }
   }
   
@@ -498,6 +533,7 @@ bool HoneypotLogging::shouldLogEvent(uint32_t ip, ProtocolType protocol) {
   logArray[*logIndex].lastLogTime = currentTime;
   *logIndex = (*logIndex + 1) % MAX_TRACKED_IPS; // Circular buffer
   
+  xSemaphoreGive(holdoffMutex);
   return true;
 }
 
@@ -1285,15 +1321,18 @@ void HoneypotLogging::sendInternetDetectedTrap(IPAddress gatewayIp, IPAddress dh
 // Remove an IP from all holdoff tracking arrays (called when a device disappears)
 void HoneypotLogging::removeIPFromHoldoff(IPAddress ip) {
   uint32_t ipU32 = ((uint32_t)ip[0] << 24) | ((uint32_t)ip[1] << 16) | ((uint32_t)ip[2] << 8) | ip[3];
+  xSemaphoreTake(holdoffMutex, portMAX_DELAY);
   for (int i = 0; i < MAX_TRACKED_IPS; i++) {
     if (tcpIPLog[i].ip == ipU32) { tcpIPLog[i].ip = 0; tcpIPLog[i].lastLogTime = 0; }
     if (udpIPLog[i].ip == ipU32) { udpIPLog[i].ip = 0; udpIPLog[i].lastLogTime = 0; }
     if (icmpIPLog[i].ip == ipU32) { icmpIPLog[i].ip = 0; icmpIPLog[i].lastLogTime = 0; }
   }
+  xSemaphoreGive(holdoffMutex);
 }
 
 // Clear all holdoff tracking arrays (called on a user-requested state reset)
 void HoneypotLogging::resetHoldoff() {
+  xSemaphoreTake(holdoffMutex, portMAX_DELAY);
   tcpIPLogIndex = 0;
   udpIPLogIndex = 0;
   icmpIPLogIndex = 0;
@@ -1305,4 +1344,5 @@ void HoneypotLogging::resetHoldoff() {
     icmpIPLog[i].ip = 0;
     icmpIPLog[i].lastLogTime = 0;
   }
+  xSemaphoreGive(holdoffMutex);
 }

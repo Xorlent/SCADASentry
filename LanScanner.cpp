@@ -11,6 +11,7 @@
 #include <ETH.h>
 #include <lwip/netif.h>
 #include <lwip/etharp.h>
+#include <esp_timer.h>
 
 // Ping timeout per host (ms)
 #define PING_TIMEOUT_MS 100
@@ -210,7 +211,7 @@ void LanScanner::runScan() {
   }
 
   scanCount++;
-  uint32_t scanStart = millis();
+  int64_t scanStart = esp_timer_get_time();
   bool doStatusCheck = (scanCount % LAN_STATUS_CHECK_MULTIPLIER == 0);
   bool doExpansionCheck = (scanCount % SLOT_EXPANSION_CHECK_MULTIPLIER == 0);
 
@@ -253,7 +254,7 @@ void LanScanner::runScan() {
         dev.hasStatus = false;
         dev.moduleCount = 0;
         dev.highestSlot = 0;
-        dev.lastSeen = millis();
+        dev.lastSeen = esp_timer_get_time();
         dev.lastStatusCheck = 0;
 
         const ClxDiscoveryResult* plc = findDiscovered(discovered, ip);
@@ -262,7 +263,7 @@ void LanScanner::runScan() {
           dev.isPlc = true;
           queryPlcMode(dev);
           dev.hasStatus = true;
-          dev.lastStatusCheck = millis();
+          dev.lastStatusCheck = esp_timer_get_time();
           logger->sendNewDeviceTrap(ip, dev.mac, true, dev.vendor, dev.productName,
                                     dev.firmware, dev.serial, dev.state, dev.mode);
         } else {
@@ -289,7 +290,7 @@ void LanScanner::runScan() {
         }
       } else {
         // Existing device
-        devices[idx].lastSeen = millis();
+        devices[idx].lastSeen = esp_timer_get_time();
         if (hasMac) {
           memcpy(devices[idx].mac, mac, 6);
           devices[idx].hasMac = true;
@@ -302,7 +303,7 @@ void LanScanner::runScan() {
             devices[idx].isPlc = true;
             queryPlcMode(devices[idx]);
             devices[idx].hasStatus = true;
-            devices[idx].lastStatusCheck = millis();
+            devices[idx].lastStatusCheck = esp_timer_get_time();
             logger->sendNewDeviceTrap(ip, devices[idx].mac, true, devices[idx].vendor,
                                       devices[idx].productName, devices[idx].firmware,
                                       devices[idx].serial, devices[idx].state, devices[idx].mode);
@@ -331,8 +332,8 @@ void LanScanner::runScan() {
       populatePlc(dev, discovered[i]);
       queryPlcMode(dev);
       dev.hasStatus = true;
-      dev.lastSeen = millis();
-      dev.lastStatusCheck = millis();
+      dev.lastSeen = esp_timer_get_time();
+      dev.lastStatusCheck = esp_timer_get_time();
       logger->sendNewDeviceTrap(dev.ip, dev.mac, true, dev.vendor, dev.productName,
                                 dev.firmware, dev.serial, dev.state, dev.mode);
       addDevice(dev);
@@ -343,7 +344,7 @@ void LanScanner::runScan() {
       logger->safePrintln(buf);
     } else {
       // Refresh lastSeen for PLCs already tracked (so they aren't reported gone).
-      devices[idx].lastSeen = millis();
+      devices[idx].lastSeen = esp_timer_get_time();
     }
   }
 
@@ -512,7 +513,7 @@ void LanScanner::checkStatus(DeviceEntry& dev, bool doExpansionCheck) {
     }
   }
 
-  dev.lastStatusCheck = millis();
+  dev.lastStatusCheck = esp_timer_get_time();
 }
 
 void LanScanner::addDevice(const DeviceEntry& dev) {
@@ -528,3 +529,4 @@ void LanScanner::removeDevice(int index) {
   }
   deviceCount--;
 }
+

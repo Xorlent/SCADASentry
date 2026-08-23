@@ -100,6 +100,10 @@ private:
   // deferred (not misrouted or lost) until the gateway is restored.
   SemaphoreHandle_t gatewayMutex;
 
+  // FreeRTOS mutex guarding the holdoff tracking arrays (tcpIPLog/udpIPLog/
+  // icmpIPLog), which are accessed from both the main loop and the scanner task.
+  SemaphoreHandle_t holdoffMutex;
+
   IPLogEntry tcpIPLog[MAX_TRACKED_IPS];
   IPLogEntry udpIPLog[MAX_TRACKED_IPS];
   IPLogEntry icmpIPLog[MAX_TRACKED_IPS];
