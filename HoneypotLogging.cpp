@@ -32,6 +32,12 @@ static const uint32_t OID_DEVICE_PREV_FIRMWARE[]    = {1,3,6,1,4,1,99999,1,14,0}
 static const uint32_t OID_DEVICE_PREV_MODE[]        = {1,3,6,1,4,1,99999,1,15,0};
 static const uint32_t OID_DEVICE_FIRMWARE_VULN[]    = {1,3,6,1,4,1,99999,1,16,0};
 
+// Internet detection object OIDs
+static const uint32_t OID_INTERNET_DHCP_SERVER[]        = {1,3,6,1,4,1,99999,1,21,0};
+static const uint32_t OID_INTERNET_ACCESS[]    = {1,3,6,1,4,1,99999,1,22,0};
+static const uint32_t OID_INTERNET_DETECTION_METHOD[]   = {1,3,6,1,4,1,99999,1,23,0};
+static const uint32_t OID_INTERNET_GATEWAY[]            = {1,3,6,1,4,1,99999,1,24,0};
+
 static const uint32_t OID_TRAP_TCP_CONN[]   = {1,3,6,1,4,1,99999,0,1};
 static const uint32_t OID_TRAP_UDP_CONN[]   = {1,3,6,1,4,1,99999,0,2};
 static const uint32_t OID_TRAP_ICMP_REQ[]   = {1,3,6,1,4,1,99999,0,3};
@@ -44,6 +50,7 @@ static const uint32_t OID_TRAP_NEW_DEVICE[]         = {1,3,6,1,4,1,99999,0,8};
 static const uint32_t OID_TRAP_DEVICE_GONE[]        = {1,3,6,1,4,1,99999,0,9};
 static const uint32_t OID_TRAP_DEVICE_MODE_CHANGE[] = {1,3,6,1,4,1,99999,0,10};
 static const uint32_t OID_TRAP_DEVICE_FW_CHANGE[]   = {1,3,6,1,4,1,99999,0,11};
+static const uint32_t OID_TRAP_INTERNET_DETECTED[]       = {1,3,6,1,4,1,99999,0,12};
 
 // Human-readable name for an event type
 static const char* eventTypeName(EventType t) {
@@ -151,6 +158,9 @@ void HoneypotLogging::begin() {
   
   // Create mutex for serializing SNMP trap sends
   trapMutex = xSemaphoreCreateMutex();
+
+  // Create mutex guarding temporary default-gateway changes
+  gatewayMutex = xSemaphoreCreateMutex();
   
   // Initialize IP tracking arrays
   for(int i = 0; i < MAX_TRACKED_IPS; i++) {
@@ -171,13 +181,28 @@ void HoneypotLogging::begin() {
   beginSMTPTask();
 }
 
-// Send an SNMP trap under the trap mutex (thread-safe across tasks)
+// Acquire the gateway-change lock. While held, SNMP/SMTP sends block (defer)
+// until the temporary default-gateway change is complete.
+void HoneypotLogging::beginGatewayChange() {
+  xSemaphoreTake(gatewayMutex, portMAX_DELAY);
+}
+
+// Release the gateway-change lock, allowing deferred SNMP/SMTP sends to proceed.
+void HoneypotLogging::endGatewayChange() {
+  xSemaphoreGive(gatewayMutex);
+}
+
+// Send an SNMP trap under the trap mutex (thread-safe across tasks).
+// Blocks on the gateway-change lock so traps are deferred (not misrouted)
+// while the default gateway is temporarily changed.
 void HoneypotLogging::sendTrap(const uint32_t* trapOid, size_t trapOidLen,
                                const SnmpVarbind* varbinds, size_t varbindCount) {
+  xSemaphoreTake(gatewayMutex, portMAX_DELAY);
   xSemaphoreTake(trapMutex, portMAX_DELAY);
   sendSNMPv2cTrap(*snmpUdp, snmpTrapServer, snmpTrapPort, snmpCommunity,
                   millis() / 10, trapOid, trapOidLen, varbinds, varbindCount);
   xSemaphoreGive(trapMutex);
+  xSemaphoreGive(gatewayMutex);
 }
 
 // Thread-safe Serial functions
@@ -258,8 +283,12 @@ void HoneypotLogging::smtpTask(void* parameter) {
     // Wait for email (blocks this task, not main loop)
     // portMAX_DELAY = wait indefinitely
     if (xQueueReceive(logger->emailQueue, &email, portMAX_DELAY) == pdTRUE) {
+      // Defer until any temporary default-gateway change completes, so the
+      // email is not misrouted or lost.
+      xSemaphoreTake(logger->gatewayMutex, portMAX_DELAY);
       // Send email (blocks this task, main loop continues)
       logger->sendSMTPEmail(email.subject, email.body);
+      xSemaphoreGive(logger->gatewayMutex);
       
       // Small delay between emails
       vTaskDelay(pdMS_TO_TICKS(10));
@@ -1170,6 +1199,87 @@ void HoneypotLogging::sendDeviceFirmwareChangeTrap(IPAddress deviceIp, const uin
   }
 
   sendTrap(OID_TRAP_DEVICE_FW_CHANGE, sizeof(OID_TRAP_DEVICE_FW_CHANGE) / sizeof(uint32_t), varbinds, vbCount);
+}
+
+// Send an internetDetectedTrap when Internet access is detected.
+void HoneypotLogging::sendInternetDetectedTrap(IPAddress gatewayIp, IPAddress dhcpServerIp,
+                                               bool internetAccessible, int32_t detectionMethod) {
+  char eventTimeStr[32];
+  const char* timeStr = ntpClient->formattedTime("%Y-%m-%dT%H:%M:%SZ");
+  strncpy(eventTimeStr, timeStr, sizeof(eventTimeStr) - 1);
+  eventTimeStr[sizeof(eventTimeStr) - 1] = '\0';
+
+  // SMTP mode: send email notification instead
+  if (useSMTP) {
+    char subject[80];
+    snprintf(subject, sizeof(subject), "[%s Alert] Internet access detected", (const char*)hostname);
+
+    char body[512];
+    snprintf(body, sizeof(body),
+             "Honeypot: %s (%d.%d.%d.%d)\n"
+             "Timestamp: %s UTC\n"
+             "Gateway: %d.%d.%d.%d\n"
+             "DHCP server: %d.%d.%d.%d\n"
+             "Internet access: %s\n"
+             "Detection method: %s\n",
+             (const char*)hostname, honeypotIP[0], honeypotIP[1], honeypotIP[2], honeypotIP[3],
+             eventTimeStr,
+             gatewayIp[0], gatewayIp[1], gatewayIp[2], gatewayIp[3],
+             dhcpServerIp[0], dhcpServerIp[1], dhcpServerIp[2], dhcpServerIp[3],
+             internetAccessible ? "accessible" : "not accessible",
+             detectionMethod == 1 ? "TCP connect" : "DNS query");
+
+    if (debugMode) {
+      safePrintln("[DEBUG] Queueing Internet detection email...");
+    }
+    queueEmail(subject, body);
+    return;
+  }
+
+  uint8_t gatewayBytes[4] = { gatewayIp[0], gatewayIp[1], gatewayIp[2], gatewayIp[3] };
+  uint8_t dhcpBytes[4] = { dhcpServerIp[0], dhcpServerIp[1], dhcpServerIp[2], dhcpServerIp[3] };
+
+  SnmpVarbind varbinds[5];
+  size_t vbCount = 0;
+
+  varbinds[vbCount].oid = OID_HONEYPOT_EVENT_TIME;
+  varbinds[vbCount].oidLen = sizeof(OID_HONEYPOT_EVENT_TIME) / sizeof(uint32_t);
+  varbinds[vbCount].type = SNMP_OCTET_STRING;
+  varbinds[vbCount].bytes = (const uint8_t*)eventTimeStr;
+  varbinds[vbCount].byteLen = strlen(eventTimeStr);
+  vbCount++;
+
+  varbinds[vbCount].oid = OID_INTERNET_GATEWAY;
+  varbinds[vbCount].oidLen = sizeof(OID_INTERNET_GATEWAY) / sizeof(uint32_t);
+  varbinds[vbCount].type = SNMP_IP_ADDRESS;
+  varbinds[vbCount].bytes = gatewayBytes;
+  varbinds[vbCount].byteLen = 4;
+  vbCount++;
+
+  varbinds[vbCount].oid = OID_INTERNET_DHCP_SERVER;
+  varbinds[vbCount].oidLen = sizeof(OID_INTERNET_DHCP_SERVER) / sizeof(uint32_t);
+  varbinds[vbCount].type = SNMP_IP_ADDRESS;
+  varbinds[vbCount].bytes = dhcpBytes;
+  varbinds[vbCount].byteLen = 4;
+  vbCount++;
+
+  varbinds[vbCount].oid = OID_INTERNET_ACCESS;
+  varbinds[vbCount].oidLen = sizeof(OID_INTERNET_ACCESS) / sizeof(uint32_t);
+  varbinds[vbCount].type = SNMP_INTEGER;
+  varbinds[vbCount].intValue = internetAccessible ? 1 : 0;
+  vbCount++;
+
+  varbinds[vbCount].oid = OID_INTERNET_DETECTION_METHOD;
+  varbinds[vbCount].oidLen = sizeof(OID_INTERNET_DETECTION_METHOD) / sizeof(uint32_t);
+  varbinds[vbCount].type = SNMP_INTEGER;
+  varbinds[vbCount].intValue = detectionMethod;
+  vbCount++;
+
+  if (debugMode) {
+    safePrintln("[DEBUG] Sending Internet access detected trap...");
+  }
+
+  sendTrap(OID_TRAP_INTERNET_DETECTED, sizeof(OID_TRAP_INTERNET_DETECTED) / sizeof(uint32_t), varbinds, vbCount);
 }
 
 // Remove an IP from all holdoff tracking arrays (called when a device disappears)

@@ -95,6 +95,11 @@ private:
   // FreeRTOS mutex for serializing SNMP trap sends (shared with the LAN scanner task)
   SemaphoreHandle_t trapMutex;
 
+  // FreeRTOS mutex held while the default gateway is temporarily changed for
+  // Internet detection. SNMP/SMTP sends block on this mutex so they are
+  // deferred (not misrouted or lost) until the gateway is restored.
+  SemaphoreHandle_t gatewayMutex;
+
   IPLogEntry tcpIPLog[MAX_TRACKED_IPS];
   IPLogEntry udpIPLog[MAX_TRACKED_IPS];
   IPLogEntry icmpIPLog[MAX_TRACKED_IPS];
@@ -181,6 +186,16 @@ public:
   void sendDeviceModeChangeTrap(IPAddress deviceIp, const uint8_t mac[6], int32_t prevMode, int32_t mode);
   void sendDeviceFirmwareChangeTrap(IPAddress deviceIp, const uint8_t mac[6],
                                     const char* prevFirmware, const char* firmware, int32_t vulnerable);
+
+  // Internet detection notification (called from the Internet detection task)
+  void sendInternetDetectedTrap(IPAddress gatewayIp, IPAddress dhcpServerIp,
+                                bool internetAccessible, int32_t detectionMethod);
+
+  // Acquire/release the gateway-change lock. While held, SNMP/SMTP sends block
+  // (defer) until the temporary default-gateway change is complete. Called by
+  // the Internet detection task around its temporary gateway swap.
+  void beginGatewayChange();
+  void endGatewayChange();
 
   // Remove an IP from the holdoff tracking arrays (called when a device disappears)
   void removeIPFromHoldoff(IPAddress ip);

@@ -183,6 +183,41 @@ deviceFirmwareVulnerable OBJECT-TYPE
     DESCRIPTION "Whether the current firmware is known to be vulnerable."
     ::= { scadaSentryObjects 16 }
 
+internetDhcpServerIp OBJECT-TYPE
+    SYNTAX      IpAddress
+    MAX-ACCESS  accessible-for-notify
+    STATUS      current
+    DESCRIPTION "IP address of the DHCP server detected on the LAN (the gateway)."
+    ::= { scadaSentryObjects 21 }
+
+internetAccessible OBJECT-TYPE
+    SYNTAX      INTEGER {
+                    no(0),
+                    yes(1)
+                }
+    MAX-ACCESS  accessible-for-notify
+    STATUS      current
+    DESCRIPTION "Whether the gateway provides Internet reachability."
+    ::= { scadaSentryObjects 22 }
+
+internetDetectionMethod OBJECT-TYPE
+    SYNTAX      INTEGER {
+                    none(0),
+                    tcpConnect(1),
+                    dnsQuery(2)
+                }
+    MAX-ACCESS  accessible-for-notify
+    STATUS      current
+    DESCRIPTION "Method used to verify Internet reachability."
+    ::= { scadaSentryObjects 23 }
+
+internetGatewayIp OBJECT-TYPE
+    SYNTAX      IpAddress
+    MAX-ACCESS  accessible-for-notify
+    STATUS      current
+    DESCRIPTION "Gateway through which Internet reachability was verified (DHCP-advertised or configured)."
+    ::= { scadaSentryObjects 24 }
+
 -- Reserved object OIDs for future functionality:
 --   scadaSentryObjects 17-18 = reserved
 
@@ -260,8 +295,15 @@ deviceFirmwareChangedTrap NOTIFICATION-TYPE
     DESCRIPTION "The firmware revision of a ControlLogix device changed."
     ::= { scadaSentryNotifications 11 }
 
+internetDetectedTrap NOTIFICATION-TYPE
+    OBJECTS     { honeypotEventTime, internetGatewayIp, internetDhcpServerIp,
+                  internetAccessible, internetDetectionMethod }
+    STATUS      current
+    DESCRIPTION "Internet access was detected on the LAN."
+    ::= { scadaSentryNotifications 12 }
+
 -- Reserved notification OIDs for future functionality:
 --   scadaSentryNotifications 7  = reserved (future "our device" trap)
---   scadaSentryNotifications 12-13 = reserved
+--   scadaSentryNotifications 13 = reserved
 
 END

@@ -26,6 +26,7 @@
 #include <lwip/prot/tcp.h>
 #include "HoneypotLogging.h"
 #include "LanScanner.h"
+#include "InternetDetection.h"
 #include "ConfigValidation.h"
 
 // Define TCP structures and flags if not already available
@@ -97,6 +98,10 @@ HoneypotLogging logger(hostName, ip, snmpTrapSvr, snmpTrapPort, snmpCommunity, D
 LanScanner scanner(&logger, ip, gateway, subnet);
 TaskHandle_t scannerTaskHandle = NULL;
 
+// Internet access detection
+InternetDetection internetDetector(&logger, gateway);
+TaskHandle_t internetDetectionTaskHandle = NULL;
+
 // LAN scanner task: periodically scans the local subnet for devices
 void scannerTask(void* parameter) {
   // Wait briefly after boot for NTP sync and network settling
@@ -105,6 +110,17 @@ void scannerTask(void* parameter) {
     scanner.runScan();
     // Wait for the scan interval, or wake immediately on a reset notification.
     ulTaskNotifyTake(pdTRUE, (LAN_SCAN_INTERVAL_SECONDS * 1000) / portTICK_PERIOD_MS);
+  }
+}
+
+// Internet detection task: periodically probes for a DHCP server and verifies
+// Internet reachability to detect Internet access.
+void internetDetectionTask(void* parameter) {
+  // Wait after boot for NTP sync and network settling.
+  vTaskDelay(10000 / portTICK_PERIOD_MS);
+  while (1) {
+    internetDetector.runDetection();
+    vTaskDelay((INTERNET_DETECTION_INTERVAL_SECONDS * 1000) / portTICK_PERIOD_MS);
   }
 }
 
@@ -546,6 +562,11 @@ void setup() {
   // Initialize and start the LAN scanner
   scanner.begin();
   xTaskCreate(scannerTask, "lanScanner", 8192, NULL, 1, &scannerTaskHandle);
+
+  // Initialize and start Internet detection
+  if (DETECT_INTERNET) {
+    xTaskCreate(internetDetectionTask, "internetDetection", 8192, NULL, 1, &internetDetectionTaskHandle);
+  }
   
   // Create raw sockets (lwIP requires separate sockets per protocol)
   

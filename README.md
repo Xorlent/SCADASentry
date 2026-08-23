@@ -105,6 +105,7 @@ All traps are SNMPv2c, sent to UDP port 162 (configurable). Import `SCADASENTRY-
 | `deviceDisappearedTrap` | `1.3.6.1.4.1.99999.0.9` | eventTime, deviceIp, deviceMac |
 | `deviceModeChangedTrap` | `1.3.6.1.4.1.99999.0.10` | eventTime, deviceIp, deviceMac, prevMode, mode |
 | `deviceFirmwareChangedTrap` | `1.3.6.1.4.1.99999.0.11` | eventTime, deviceIp, deviceMac, prevFirmware, firmware, firmwareVulnerable |
+| `internetDetectedTrap` | `1.3.6.1.4.1.99999.0.12` | eventTime, gatewayIp, dhcpServerIp, internetAccessible, detectionMethod |
 
 Every trap also carries the standard `sysUpTime.0` (TimeTicks) and `snmpTrapOID.0` varbinds.
 
@@ -123,6 +124,10 @@ Every trap also carries the standard `sysUpTime.0` (TimeTicks) and `snmpTrapOID.
 | `.1.14.0` | `devicePreviousFirmwareVersion` | OCTET STRING |
 | `.1.15.0` | `devicePreviousMode` | INTEGER (enum) |
 | `.1.16.0` | `deviceFirmwareVulnerable` | INTEGER (enum) |
+| `.1.21.0` | `internetDhcpServerIp` | IpAddress |
+| `.1.22.0` | `internetAccessible` | INTEGER (enum) |
+| `.1.23.0` | `internetDetectionMethod` | INTEGER (enum) |
+| `.1.24.0` | `internetGatewayIp` | IpAddress |
 
 ### Enumerated varbinds (translated by the MIB)
 
@@ -132,6 +137,8 @@ Every trap also carries the standard `sysUpTime.0` (TimeTicks) and `snmpTrapOID.
 - `deviceState`: `nonexistent(0)`, `selfTesting(1)`, `standby(2)`, `operational(3)`, `majorRecoverableFault(4)`, `majorUnrecoverableFault(5)`, `communicationFault(6)`, `unconfigured(7)`
 - `deviceMode`: `program(0)`, `run(1)`, `testRemote(2)`
 - `deviceFirmwareVulnerable`: `notVulnerable(0)`, `vulnerable(1)`, `unknown(2)`
+- `internetAccessible`: `no(0)`, `yes(1)`
+- `internetDetectionMethod`: `none(0)`, `tcpConnect(1)`, `dnsQuery(2)`
 
 ## Guidance and Limitations
 - The device produces SNMPv2c traps on UDP port 162 (community string configurable in Config.h).
@@ -140,6 +147,8 @@ Every trap also carries the standard `sysUpTime.0` (TimeTicks) and `snmpTrapOID.
 - It is recommended you exempt the SCADASentry device IP addresses in any legitimate vulnerability or network scanners to avoid triggering alerts.
 - If ICMP is disabled in Config.h, the device will respond to pings from any IP address within the routable network.
 - LAN device discovery scans the local subnet using ARP, so it only sees devices on the same L2 segment (ARP doesn't cross routers).
+- Internet detection probes for a DHCP server on the segment (retrieving both the server identifier and the advertised default gateway) and verifies Internet reachability through that gateway and/or the configured default gateway (TCP connect to a public anycast IP on port 443, falling back to a DNS query to a public resolver). It reports `internetDetectedTrap` when Internet access is detected, including the gateway and any DHCP server found.
+- The Internet detection DHCP probe sends only a DHCPDISCOVER (never a DHCPREQUEST), so it does not obtain or reserve an IP address from any DHCP server; the device always keeps its statically-configured IP.
 - A physical reset button (GPIO 45, active-high) clears all detected-device and holdoff state when held for at least 1 second, restarting detection as if the device had just booted.
 
 ## Technical Information

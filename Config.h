@@ -177,6 +177,38 @@ const bool DEBUG = true;
         // IPAddress(192, 168, 1, 10),  // example: exclude a specific host
     };
 
+////////// Internet Detection Configuration //////////
+
+    // Detects Internet access on the local LAN.
+    // Internet access is identified by (1) a DHCP server responding on the segment
+    // (which should not exist on a PLC LAN) and (2) Internet reachability
+    // through the gateway. Reports via the internetDetectedTrap SNMP trap.
+    // See README.md "SNMP Trap Reference" for the trap OID.
+
+    // Enable Internet detection
+    const bool DETECT_INTERNET = true;
+
+    // Interval between Internet detection checks, in seconds
+    const uint32_t INTERNET_DETECTION_INTERVAL_SECONDS = 600;
+
+    // How long (ms) to wait for a DHCPOFFER response to the DHCP probe
+    const uint16_t INTERNET_DHCP_TIMEOUT_MS = 3000;
+
+    // How long (ms) to wait for each Internet reachability attempt
+    const uint16_t INTERNET_CONNECT_TIMEOUT_MS = 5000;
+
+    // Public anycast IPs probed with a TCP connect on port 443, in order
+    const IPAddress internetTcpProbeHosts[] = {
+        IPAddress(1, 1, 1, 1),    // Cloudflare
+        IPAddress(8, 8, 8, 8),    // Google
+    };
+
+    // DNS server used for the fallback DNS query test
+    const IPAddress internetDnsServer(9, 9, 9, 9);   // Quad9
+
+    // Hostname resolved in the DNS fallback test
+    const char* const internetDnsProbeHost = "www.microsoft.com";
+
 ////////--------------------------------------- END OF CONFIGURATION SETTINGS ---------------------------------------////////
 
 ////////// Calculated Array Sizes (Do Not Edit) //////////
@@ -186,5 +218,6 @@ const bool DEBUG = true;
     const uint16_t honeypotNumUDPPorts = sizeof(honeypotUDPPorts)/sizeof(honeypotUDPPorts[0]);
     const uint16_t honeypotNumICMPTypes = sizeof(honeypotICMPTypes)/sizeof(honeypotICMPTypes[0]);
     const uint16_t excludedHostsCount = sizeof(excludedHosts)/sizeof(excludedHosts[0]);
+    const uint16_t internetTcpProbeHostCount = sizeof(internetTcpProbeHosts)/sizeof(internetTcpProbeHosts[0]);
 
 #endif // CONFIG_H
