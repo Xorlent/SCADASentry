@@ -18,6 +18,8 @@
 #define DISCOVER_TIMEOUT_MS 3000
 // Per-PLC TCP read timeout for getPlcInfo (ms)
 #define PLC_INFO_TIMEOUT_MS 2000
+// Maximum backplane slot index to probe (17-slot 1756 chassis: slots 0..16).
+#define MAX_SLOT 16
 
 // Advance an IPv4 address to the next host address
 static bool nextHost(IPAddress &ip) {
@@ -30,16 +32,16 @@ static bool nextHost(IPAddress &ip) {
 
 // Map a ControlLogix keyswitch position to the deviceMode enum (see MIB):
 //   program(0), run(1); -1 = unknown/unreadable.
-// The remote distinction (REMOTE RUN / REMOTE PROG) is collapsed into the
-// run/program state, which is the security-relevant signal.
-static int32_t keyswitchToMode(const String& keyswitch, bool isRun) {
+// Only the physical RUN keyswitch position is reported as "run"; REMOTE RUN
+// and REMOTE PROG are treated as not-run.
+static int32_t keyswitchToMode(const String& keyswitch) {
   if (keyswitch.isEmpty() || keyswitch == "UNKNOWN") return -1;
-  return isRun ? 1 : 0;
+  return (keyswitch == "RUN") ? 1 : 0;
 }
 
 // Human-readable run status (the only thing we care about).
 static const char* modeName(int32_t mode) {
-  return (mode == 1) ? "Run" : "not Run";
+  return (mode == 1) ? "in RUN" : "NOT in RUN";
 }
 
 // Find a discovery result matching an IP address (or nullptr).
@@ -128,6 +130,15 @@ static uint8_t buildModules(DeviceModule* out, const ClxPlcInfo& info) {
   return count;
 }
 
+// Highest backplane slot (1..16) where a module was detected; 0 if none.
+static uint8_t highestModuleSlot(const ClxPlcInfo& info) {
+  uint8_t hi = 0;
+  for (size_t i = 0; i < info.modules.size(); i++) {
+    if (info.modules[i].slot > hi) hi = info.modules[i].slot;
+  }
+  return hi;
+}
+
 // Compare two module lists for change detection.
 static bool modulesEqual(const DeviceModule* a, uint8_t na,
                          const DeviceModule* b, uint8_t nb) {
@@ -152,7 +163,7 @@ static void printModuleUrls(HoneypotLogging* logger, const ClxPlcInfo& info) {
     const ClxModule& m = info.modules[i];
     String url = tenableURL(tenableSearchTerm(m.deviceType, m.productName));
     char buf[256];
-    snprintf(buf, sizeof(buf), "[DEBUG] Tenable URL slot %u (%s) fw %u.%u: %s",
+    snprintf(buf, sizeof(buf), "[DEBUG] Slot %u is a %s running firmware %u.%u: %s",
              (unsigned)m.slot, m.productName.c_str(),
              (unsigned)m.majorRevision, (unsigned)m.minorRevision, url.c_str());
     logger->safePrintln(buf);
@@ -163,6 +174,7 @@ LanScanner::LanScanner(HoneypotLogging* logger, IPAddress localIP, IPAddress gat
     : logger(logger), localIP(localIP), gateway(gateway), subnetMask(subnetMask) {
   deviceCount = 0;
   scanCount = 0;
+  resetRequested = false;
 }
 
 void LanScanner::begin() {
@@ -178,13 +190,29 @@ void LanScanner::begin() {
     devices[i].isPlc = false;
     devices[i].hasStatus = false;
     devices[i].moduleCount = 0;
+    devices[i].highestSlot = 0;
   }
 }
 
+void LanScanner::requestReset() {
+  resetRequested = true;
+}
+
 void LanScanner::runScan() {
+  // Apply a user-requested state reset (reset button) before starting the scan.
+  if (resetRequested) {
+    resetRequested = false;
+    deviceCount = 0;
+    scanCount = 0;
+    if (DEBUG) {
+      logger->safePrintln("[DEBUG] LAN scanner state reset");
+    }
+  }
+
   scanCount++;
   uint32_t scanStart = millis();
   bool doStatusCheck = (scanCount % LAN_STATUS_CHECK_MULTIPLIER == 0);
+  bool doExpansionCheck = (scanCount % SLOT_EXPANSION_CHECK_MULTIPLIER == 0);
 
   if (DEBUG) {
     char buf[48];
@@ -224,6 +252,7 @@ void LanScanner::runScan() {
         dev.isPlc = false;
         dev.hasStatus = false;
         dev.moduleCount = 0;
+        dev.highestSlot = 0;
         dev.lastSeen = millis();
         dev.lastStatusCheck = 0;
 
@@ -298,6 +327,7 @@ void LanScanner::runScan() {
       dev.hasMac = false;
       dev.isPlc = true;
       dev.moduleCount = 0;
+      dev.highestSlot = 0;
       populatePlc(dev, discovered[i]);
       queryPlcMode(dev);
       dev.hasStatus = true;
@@ -330,11 +360,11 @@ void LanScanner::runScan() {
     }
   }
 
-  // 5. Status check (every Nth scan)
-  if (doStatusCheck) {
+  // 5. Status check (every Nth scan); an expansion check widens the slot scan.
+  if (doStatusCheck || doExpansionCheck) {
     for (int i = 0; i < deviceCount; i++) {
       if (devices[i].isPlc) {
-        checkStatus(devices[i]);
+        checkStatus(devices[i], doExpansionCheck);
       }
     }
   }
@@ -403,18 +433,20 @@ void LanScanner::populatePlc(DeviceEntry& dev, const ClxDiscoveryResult& d) {
   dev.state = d.state;
   dev.mode = -1;
   dev.moduleCount = 0;   // populated by queryPlcMode() via getPlcInfo()
+  dev.highestSlot = 0;   // populated by queryPlcMode() via getPlcInfo()
 }
 
 // Query the run-switch keyswitch position (mode) and module list for a PLC.
 void LanScanner::queryPlcMode(DeviceEntry& dev) {
   ClxPlcInfo info;
-  if (clx.getPlcInfo(dev.ip, info, PLC_INFO_TIMEOUT_MS)) {
-    dev.mode = keyswitchToMode(info.keyswitch, info.isRun);
+  if (clx.getPlcInfo(dev.ip, info, PLC_INFO_TIMEOUT_MS, MAX_SLOT, true)) {
+    dev.mode = keyswitchToMode(info.keyswitch);
     dev.moduleCount = buildModules(dev.modules, info);
+    dev.highestSlot = highestModuleSlot(info);
     if (DEBUG) {
-      char buf[64];
-      snprintf(buf, sizeof(buf), "[DEBUG] PLC %d.%d.%d.%d %s",
-               dev.ip[0], dev.ip[1], dev.ip[2], dev.ip[3], modeName(dev.mode));
+      char buf[128];
+      snprintf(buf, sizeof(buf), "[DEBUG] PLC %d.%d.%d.%d is %s mode and has a backplane populated up to slot %u",
+               dev.ip[0], dev.ip[1], dev.ip[2], dev.ip[3], modeName(dev.mode), (unsigned)dev.highestSlot);
       logger->safePrintln(buf);
       printModuleUrls(logger, info);
     }
@@ -425,20 +457,22 @@ void LanScanner::queryPlcMode(DeviceEntry& dev) {
 }
 
 // Re-query a PLC's firmware, mode and modules, emitting traps on change
-void LanScanner::checkStatus(DeviceEntry& dev) {
+void LanScanner::checkStatus(DeviceEntry& dev, bool doExpansionCheck) {
   ClxPlcInfo info;
-  if (!clx.getPlcInfo(dev.ip, info, PLC_INFO_TIMEOUT_MS)) {
+  uint8_t maxSlot = doExpansionCheck ? MAX_SLOT : dev.highestSlot;
+  if (!clx.getPlcInfo(dev.ip, info, PLC_INFO_TIMEOUT_MS, maxSlot, false)) {
     clx.disconnect();
     return;  // unreachable or query failed
   }
 
   char freshFirmware[16];
   snprintf(freshFirmware, sizeof(freshFirmware), "%u.%u", info.cpuMajorRevision, info.cpuMinorRevision);
-  int32_t freshMode = keyswitchToMode(info.keyswitch, info.isRun);
+  int32_t freshMode = keyswitchToMode(info.keyswitch);
 
   // Build the fresh module list for change detection.
   DeviceModule freshModules[MAX_MODULES_PER_PLC];
   uint8_t freshCount = buildModules(freshModules, info);
+  dev.highestSlot = highestModuleSlot(info);
 
   clx.disconnect();
 

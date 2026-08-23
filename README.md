@@ -17,7 +17,7 @@ This device extends the features of the [PoE Honeypot](https://github.com/Xorlen
 ## Functional Description
 SCADASentry is a honeypot that listens on any number of user-configurable TCP and UDP ports and reports activity via **SNMPv2c traps** (or email via SMTP). It is designed to detect devices joining and leaving the local PLC LAN, alerts on scanning, reconnaissance, and lateral movement.  Additionally, SCADASentry reports basic ControlLogix device information and will notify on run-key or firmware version change.
 
-When activity is detected, the device immediately sends a trap or email containing the source IP, protocol, destination port (or ICMP type), and service name. The following events are reported:
+When unexpected activity is detected, the device immediately sends a trap or email containing the source IP, protocol, destination port (or ICMP type), and service name. The following events are reported:
 
 | Event | Trap |
 |-------|------|
@@ -32,7 +32,7 @@ The device sends a `deviceOnlineTrap` when it boots (power recovery) or when its
 
 For Rockwell Automation / EtherNet/IP broadcast traffic, the device listens on UDP ports **44818** and **2222** and reports only `ListIdentity` browse/discovery traffic (encapsulation command `0x0063`), silently ignoring device I/O data. This detects RSLogix/RSLinx device browsing activity from unauthorized devices.
 
-The device also periodically scans the local LAN (every `LAN_SCAN_INTERVAL_SECONDS`, default 240s) using ARP to discover devices. ControlLogix PLCs are identified via an EtherNet/IP `ListIdentity` broadcast and queried over TCP 44818 for their identity, firmware, serial, state, and run-switch mode. Newly discovered devices are reported via `newDeviceDiscoveredTrap`, including the MAC address and — for PLCs — the vendor, product name, firmware, serial, state, and run-switch mode. Devices that stop responding are reported via `deviceDisappearedTrap` and removed from the tracked-IP holdoff list.  Note that a departed device is detected only after its ARP entry expires (5 minutes), so `deviceDisappearedTrap` can lag a device's actual departure by up to 5 minutes.  For discovered PLCs, the run-switch mode and firmware version are re-checked every Nth scan (default 1h) and reported via `deviceModeChangedTrap` / `deviceFirmwareChangedTrap` when they change.  For each discovered PLC, the device also enumerates the CPU and any Ethernet modules in the rack (including redundant/secondary CPUs) and derives a Tenable CVE search URL for each module from its device type and product name.  These URLs are held in memory (for a future in-memory database) and printed to the serial console in debug mode.
+The device also periodically scans the local LAN (every `LAN_SCAN_INTERVAL_SECONDS`, default 240s) using ARP to discover devices. ControlLogix PLCs are identified via an EtherNet/IP `ListIdentity` broadcast and queried over TCP 44818 for their identity, firmware, serial, state, and run-switch mode. Newly discovered devices are reported via `newDeviceDiscoveredTrap`, including the MAC address and — for PLCs — the vendor, product name, firmware, serial, state, and run-switch mode. Devices that stop responding are reported via `deviceDisappearedTrap` and removed from the tracked-IP holdoff list.  Note that a departed device is detected only after its ARP entry expires (5 minutes), so `deviceDisappearedTrap` can lag a device's actual departure by up to 5 minutes.  For discovered PLCs, the run-switch mode and firmware version are re-checked every Nth scan (default 1h) and reported via `deviceModeChangedTrap` / `deviceFirmwareChangedTrap` when they change.  For each discovered PLC, the device also enumerates the CPU and any Ethernet modules in the rack (including redundant/secondary CPUs) and derives a Tenable CVE search URL for each module from its device type and product name.  These URLs are held in memory (for a future in-memory database) and printed to the serial console in debug mode.  To minimize query load on production PLCs, backplane slots are probed only up to the highest slot previously detected on each PLC; a full re-probe of the remaining (higher) slots runs every `SLOT_EXPANSION_CHECK_MULTIPLIER` scans (default 360, i.e. 24 hours) to catch modules added to higher slots, and the highest detected slot is updated accordingly.  The PLC hostname and program name are read only when a PLC is first detected (or re-detected after it disappears), not on every status re-check.
 
 The device can also be configured to alert on ICMP ping requests (note: it will not respond to pings when ICMP monitoring is enabled).
 ## Programming
@@ -44,7 +44,7 @@ The device can also be configured to alert on ICMP ping requests (note: it will 
 - Email to and from addresses and SMTP relay IP if email (USE_SMTP) is _true_
 - NTP server
 - TCP and/or UDP ports to listen on (defaults are recommended)
-- LAN scan interval and hosts excluded from network scans (optional)
+- LAN scan interval, slot expansion check interval, and hosts excluded from network scans (optional)
 ### Configure and flash the device:
 _Once you've successfully programmed a single unit, skip steps 1 & 2.  Repeating this process takes 3 minutes from start to finish._  
 1. [Set up your Arduino programming environment](https://github.com/Xorlent/SCADASentry/blob/main/ARDUINO-SETUP.md)
@@ -140,6 +140,7 @@ Every trap also carries the standard `sysUpTime.0` (TimeTicks) and `snmpTrapOID.
 - It is recommended you exempt the SCADASentry device IP addresses in any legitimate vulnerability or network scanners to avoid triggering alerts.
 - If ICMP is disabled in Config.h, the device will respond to pings from any IP address within the routable network.
 - LAN device discovery scans the local subnet using ARP, so it only sees devices on the same L2 segment (ARP doesn't cross routers).
+- A physical reset button (GPIO 45, active-high) clears all detected-device and holdoff state when held for at least 1 second, restarting detection as if the device had just booted.
 
 ## Technical Information
 - CPU and Memory

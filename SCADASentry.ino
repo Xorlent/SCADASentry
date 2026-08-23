@@ -48,6 +48,19 @@
 #define ETH_PHY_MDIO    52
 #define ETH_CLK_MODE    EMAC_CLK_EXT_IN
 
+// Reset button (GPIO 45, active-high: grounded when idle, 3.3V when pressed)
+#define RESET_BUTTON_PIN            45
+#define RESET_BUTTON_DEBOUNCE_MS    50
+#define RESET_BUTTON_HOLD_MS        1000   // button must be held this long to reset
+
+// Reset button debounce state
+static int resetButtonState = LOW;          // stable (debounced) state
+static int resetButtonLastReading = LOW;    // last raw reading
+static unsigned long resetButtonLastDebounce = 0;
+static unsigned long resetButtonPressedAt = 0;   // millis() when the button was first pressed
+static bool resetButtonTriggered = false;         // true once the reset has fired for this press
+static bool resetButtonArmed = false;             // false until the pin settles to idle after boot
+
 ////////---------------------------------------        Create runtime objects        ---------------------------------------////////
 
 // Compile-time array size validation
@@ -90,7 +103,8 @@ void scannerTask(void* parameter) {
   vTaskDelay(5000 / portTICK_PERIOD_MS);
   while (1) {
     scanner.runScan();
-    vTaskDelay((LAN_SCAN_INTERVAL_SECONDS * 1000) / portTICK_PERIOD_MS);
+    // Wait for the scan interval, or wake immediately on a reset notification.
+    ulTaskNotifyTake(pdTRUE, (LAN_SCAN_INTERVAL_SECONDS * 1000) / portTICK_PERIOD_MS);
   }
 }
 
@@ -442,6 +456,9 @@ void setup() {
   
   Serial.println("Starting...");
 
+  // Configure the reset button (active-high: grounded when idle, 3.3V when pressed)
+  pinMode(RESET_BUTTON_PIN, INPUT);
+
   // Validate configuration before proceeding - halt on critical errors
   if (!validateConfiguration()) {
     Serial.println("HALTED: Fix configuration errors in Config.h, recompile and reflash");
@@ -667,7 +684,57 @@ void setup() {
   logger.safePrintln("Listening...");
 }
 
+// Reset button handling (GPIO 45, active-high: grounded when idle, 3.3V when pressed)
+void checkResetButton() {
+  int reading = digitalRead(RESET_BUTTON_PIN);
+
+  // After boot, the boot circuitry holds the pin HIGH for a while (which would
+  // look like a press). Wait for the pin to settle to its idle (LOW) state
+  // before arming button detection.
+  if (!resetButtonArmed) {
+    if (reading == LOW) {
+      resetButtonArmed = true;
+      resetButtonState = LOW;
+      resetButtonLastReading = LOW;
+      resetButtonPressedAt = 0;
+      resetButtonTriggered = false;
+    }
+    return;
+  }
+
+  if (reading != resetButtonLastReading) {
+    resetButtonLastDebounce = millis();
+  }
+  if ((millis() - resetButtonLastDebounce) > RESET_BUTTON_DEBOUNCE_MS) {
+    if (reading != resetButtonState) {
+      resetButtonState = reading;
+      if (resetButtonState == HIGH) {  // just pressed (active-high)
+        resetButtonPressedAt = millis();   // start the hold timer
+        resetButtonTriggered = false;
+      }
+    }
+  }
+  resetButtonLastReading = reading;
+
+  // Require the button to be held for RESET_BUTTON_HOLD_MS before resetting.
+  if (resetButtonState == HIGH && !resetButtonTriggered &&
+      (millis() - resetButtonPressedAt) >= RESET_BUTTON_HOLD_MS) {
+    resetButtonTriggered = true;
+    if (DEBUG) {
+      logger.safePrintln("[DEBUG] Reset button held - clearing state");
+    }
+    logger.resetHoldoff();
+    scanner.requestReset();
+    if (scannerTaskHandle != NULL) {
+      xTaskNotifyGive(scannerTaskHandle);  // wake the scanner task immediately
+    }
+  }
+}
+
 void loop() {
+  // Check the reset button
+  checkResetButton();
+
   // Process queued log events from lwIP task
   logger.processLogQueue(ip, subnet);
   

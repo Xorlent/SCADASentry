@@ -67,7 +67,11 @@ public:
 
     // Connect to a PLC and read hostname, CPU info and Ethernet module revisions.
     // Returns true on success. The connection is left open; call disconnect() when done.
-    bool getPlcInfo(const IPAddress& ip, ClxPlcInfo& info, uint32_t timeoutMs = 2000);
+    // `maxSlot` bounds the backplane slot scan (slots 1..maxSlot); pass 16 for a
+    // full 17-slot chassis scan, or a smaller value to skip probing higher slots.
+    // `readNames` controls the best-effort hostname/program-name reads.
+    bool getPlcInfo(const IPAddress& ip, ClxPlcInfo& info, uint32_t timeoutMs = 2000,
+                    uint8_t maxSlot = 16, bool readNames = true);
 
     // Unregister the CIP session and close the TCP connection.
     void disconnect();

@@ -38,9 +38,6 @@ static const uint8_t KEYSWITCH_PROG     = 0x70;
 static const uint8_t KEYSWITCH_REMOTE_0 = 0x30;
 static const uint8_t KEYSWITCH_REMOTE_1 = 0x31;
 
-// Maximum backplane slot to scan for Ethernet modules (17-slot 1756 chassis).
-static const uint8_t MAX_SLOT = 16;
-
 // Maximum CIP response data size (receive buffer for CIP replies).
 static const uint16_t MAX_CIP_RESPONSE = 256;
 
@@ -426,7 +423,8 @@ bool ControlLogixDiscovery::readProgramName(String& programName, uint32_t timeou
 // ---------------------------------------------------------------------------
 // Connect to a PLC and read all requested information.
 // ---------------------------------------------------------------------------
-bool ControlLogixDiscovery::getPlcInfo(const IPAddress& ip, ClxPlcInfo& info, uint32_t timeoutMs) {
+bool ControlLogixDiscovery::getPlcInfo(const IPAddress& ip, ClxPlcInfo& info,
+                                       uint32_t timeoutMs, uint8_t maxSlot, bool readNames) {
     info = ClxPlcInfo();
     info.ipAddress = ip;
     _session = 0;   // discard any stale session handle from a prior connection
@@ -477,19 +475,22 @@ bool ControlLogixDiscovery::getPlcInfo(const IPAddress& ip, ClxPlcInfo& info, ui
     info.modules.push_back(cpuMod);
 
     // --- Hostname (TCP/IP Interface object, attribute 6) ---
-    readHostname(info.hostname, timeoutMs);   // best-effort; may be empty
+    if (readNames) readHostname(info.hostname, timeoutMs);   // best-effort; may be empty
 
     // --- Program name (Program Name object 0x64) ---
-    readProgramName(info.programName, timeoutMs);   // best-effort; may be empty
+    if (readNames) readProgramName(info.programName, timeoutMs);   // best-effort; may be empty
 
-    // --- Scan slots 1..16 for additional CPUs and Ethernet modules ---
-    for (uint8_t slot = 1; slot <= MAX_SLOT; slot++) {
+    // --- Scan slots 1..maxSlot for additional CPUs and Ethernet modules ---
+    for (uint8_t slot = 1; slot <= maxSlot; slot++) {
         String name;
         uint8_t m = 0, mn = 0;
         uint16_t dt = 0;
         uint16_t sw = 0;
         if (readIdentity(slot, name, m, mn, &sw, &dt, timeoutMs)) {
-            if (dt == DEVICE_TYPE_COMM_ADAPTER || dt == DEVICE_TYPE_PLC) {
+            // Keep CPUs and Ethernet comm modules only; ignore serial, DeviceNet,
+            // ControlNet, Data Highway, etc. (comm adapters without "-EN").
+            if (dt == DEVICE_TYPE_PLC ||
+                (dt == DEVICE_TYPE_COMM_ADAPTER && name.indexOf("-EN") >= 0)) {
                 ClxModule mod;
                 mod.slot          = slot;
                 mod.deviceType    = dt;

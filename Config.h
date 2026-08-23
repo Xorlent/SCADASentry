@@ -158,6 +158,13 @@ const bool DEBUG = true;
     // (LAN_SCAN_INTERVAL_SECONDS * LAN_STATUS_CHECK_MULTIPLIER seconds)
     const uint16_t LAN_STATUS_CHECK_MULTIPLIER = 15;
 
+    // How often (in scans) to re-probe backplane slots ABOVE the highest slot
+    // previously detected on each PLC, to catch modules added to higher slots.
+    // (LAN_SCAN_INTERVAL_SECONDS * SLOT_EXPANSION_CHECK_MULTIPLIER seconds;
+    // default 360 = 24 hours). Should be a multiple of LAN_STATUS_CHECK_MULTIPLIER
+    // so it coincides with a status check.
+    const uint16_t SLOT_EXPANSION_CHECK_MULTIPLIER = 360;
+
     // Quiet time (ms) between each ARP discovery request during a scan.
     // Throttles the scan's impact on the network segment; increase to reduce
     // load, decrease for faster scans. 0 disables the throttle.

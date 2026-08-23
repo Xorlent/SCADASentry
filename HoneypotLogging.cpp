@@ -1181,3 +1181,18 @@ void HoneypotLogging::removeIPFromHoldoff(IPAddress ip) {
     if (icmpIPLog[i].ip == ipU32) { icmpIPLog[i].ip = 0; icmpIPLog[i].lastLogTime = 0; }
   }
 }
+
+// Clear all holdoff tracking arrays (called on a user-requested state reset)
+void HoneypotLogging::resetHoldoff() {
+  tcpIPLogIndex = 0;
+  udpIPLogIndex = 0;
+  icmpIPLogIndex = 0;
+  for (int i = 0; i < MAX_TRACKED_IPS; i++) {
+    tcpIPLog[i].ip = 0;
+    tcpIPLog[i].lastLogTime = 0;
+    udpIPLog[i].ip = 0;
+    udpIPLog[i].lastLogTime = 0;
+    icmpIPLog[i].ip = 0;
+    icmpIPLog[i].lastLogTime = 0;
+  }
+}

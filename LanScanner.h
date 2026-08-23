@@ -48,6 +48,7 @@ struct DeviceEntry {
   // Detected CPU/Ethernet modules (valid when isPlc)
   DeviceModule modules[MAX_MODULES_PER_PLC];
   uint8_t moduleCount;
+  uint8_t highestSlot;    // highest backplane slot (1..16) where a module was seen
   // Previous values for change detection
   char prevFirmware[16];
   int32_t prevMode;
@@ -65,6 +66,10 @@ public:
   // Called from the scanner FreeRTOS task at the configured interval.
   void runScan();
 
+  // Request a full state reset (device list + scan counter) on the next scan.
+  // Thread-safe: only sets a flag; the reset is applied in the scanner task.
+  void requestReset();
+
 private:
   HoneypotLogging* logger;
   IPAddress localIP;
@@ -77,6 +82,7 @@ private:
   int deviceCount;
 
   uint32_t scanCount;
+  volatile bool resetRequested;   // set by requestReset(); applied at start of runScan()
 
   // EtherNet/IP discovery client (ListIdentity broadcast + CIP reads)
   ControlLogixDiscovery clx;
@@ -88,7 +94,7 @@ private:
   bool getMac(IPAddress ip, uint8_t mac[6]);
   void populatePlc(DeviceEntry& dev, const ClxDiscoveryResult& d);
   void queryPlcMode(DeviceEntry& dev);
-  void checkStatus(DeviceEntry& dev);
+  void checkStatus(DeviceEntry& dev, bool doExpansionCheck);
   void addDevice(const DeviceEntry& dev);
   void removeDevice(int index);
 };

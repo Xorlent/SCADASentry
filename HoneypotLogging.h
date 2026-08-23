@@ -184,6 +184,9 @@ public:
 
   // Remove an IP from the holdoff tracking arrays (called when a device disappears)
   void removeIPFromHoldoff(IPAddress ip);
+
+  // Clear all holdoff tracking arrays (called on a user-requested state reset)
+  void resetHoldoff();
   
   // IP filtering
   bool shouldLogIP(uint32_t sourceIP, ProtocolType protocol, IPAddress localIP, IPAddress subnetMask);
