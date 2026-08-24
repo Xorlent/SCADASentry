@@ -195,6 +195,10 @@ public:
   void sendInternetDetectedTrap(IPAddress gatewayIp, IPAddress dhcpServerIp,
                                 bool internetAccessible, int32_t detectionMethod);
 
+  // Rogue DHCP server notification (a DHCP server advertised a gateway outside
+  // this device's configured subnet).
+  void sendRogueDhcpTrap(IPAddress dhcpServerIp, IPAddress advertisedGatewayIp);
+
   // Acquire/release the gateway-change lock. While held, SNMP/SMTP sends block
   // (defer) until the temporary default-gateway change is complete. Called by
   // the Internet detection task around its temporary gateway swap.

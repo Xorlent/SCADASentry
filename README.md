@@ -106,6 +106,7 @@ All traps are SNMPv2c, sent to UDP port 162 (configurable). Import `SCADASENTRY-
 | `deviceModeChangedTrap` | `1.3.6.1.4.1.99999.0.10` | eventTime, deviceIp, deviceMac, prevMode, mode |
 | `deviceFirmwareChangedTrap` | `1.3.6.1.4.1.99999.0.11` | eventTime, deviceIp, deviceMac, prevFirmware, firmware, firmwareVulnerable |
 | `internetDetectedTrap` | `1.3.6.1.4.1.99999.0.12` | eventTime, gatewayIp, dhcpServerIp, internetAccessible, detectionMethod |
+| `rogueDhcpServerTrap` | `1.3.6.1.4.1.99999.0.13` | eventTime, dhcpServerIp, gatewayIp |
 
 Every trap also carries the standard `sysUpTime.0` (TimeTicks) and `snmpTrapOID.0` varbinds.
 
@@ -149,6 +150,7 @@ Every trap also carries the standard `sysUpTime.0` (TimeTicks) and `snmpTrapOID.
 - LAN device discovery scans the local subnet using ARP, so it only sees devices on the same L2 segment (ARP doesn't cross routers).
 - Internet detection probes for a DHCP server on the segment (retrieving both the server identifier and the advertised default gateway) and verifies Internet reachability through that gateway and/or the configured default gateway (TCP connect to a public anycast IP on port 443, falling back to a DNS query to a public resolver). It reports `internetDetectedTrap` when Internet access is detected, including the gateway and any DHCP server found.
 - The Internet detection DHCP probe sends only a DHCPDISCOVER (never a DHCPREQUEST), so it does not obtain or reserve an IP address from any DHCP server; the device always keeps its statically-configured IP.
+- If a DHCP server advertises a default gateway outside the device's statically-configured subnet, the device treats it as a rogue DHCP server: it skips testing that gateway and reports `rogueDhcpServerTrap` (including the rogue server IP and the advertised gateway) instead.
 - A physical reset button (GPIO 45, active-high) clears all detected-device and holdoff state when held for at least 1 second, restarting detection as if the device had just booted.
 
 ## Technical Information

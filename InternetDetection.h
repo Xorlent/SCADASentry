@@ -57,6 +57,11 @@ private:
   // Test Internet reachability through a specific gateway by temporarily
   // changing the default route, then restoring it.
   bool testInternetThroughGateway(IPAddress gw, InternetDetectionMethod& method);
+
+  // Returns true if `a` is within this device's statically-configured subnet
+  // (read from the active netif). Used to detect a rogue DHCP server that
+  // advertises an out-of-subnet gateway.
+  bool isInLocalSubnet(IPAddress a);
 };
 
 #endif // INTERNET_DETECTION_H

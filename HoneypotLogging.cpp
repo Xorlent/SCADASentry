@@ -51,6 +51,7 @@ static const uint32_t OID_TRAP_DEVICE_GONE[]        = {1,3,6,1,4,1,99999,0,9};
 static const uint32_t OID_TRAP_DEVICE_MODE_CHANGE[] = {1,3,6,1,4,1,99999,0,10};
 static const uint32_t OID_TRAP_DEVICE_FW_CHANGE[]   = {1,3,6,1,4,1,99999,0,11};
 static const uint32_t OID_TRAP_INTERNET_DETECTED[]       = {1,3,6,1,4,1,99999,0,12};
+static const uint32_t OID_TRAP_ROGUE_DHCP[]              = {1,3,6,1,4,1,99999,0,13};
 
 // Human-readable name for an event type
 static const char* eventTypeName(EventType t) {
@@ -1316,6 +1317,71 @@ void HoneypotLogging::sendInternetDetectedTrap(IPAddress gatewayIp, IPAddress dh
   }
 
   sendTrap(OID_TRAP_INTERNET_DETECTED, sizeof(OID_TRAP_INTERNET_DETECTED) / sizeof(uint32_t), varbinds, vbCount);
+}
+
+// Send a rogueDhcpServerTrap when a DHCP server advertises a gateway outside
+// this device's configured subnet (indicating a rogue/malicious DHCP server).
+void HoneypotLogging::sendRogueDhcpTrap(IPAddress dhcpServerIp, IPAddress advertisedGatewayIp) {
+  char eventTimeStr[32];
+  const char* timeStr = ntpClient->formattedTime("%Y-%m-%dT%H:%M:%SZ");
+  strncpy(eventTimeStr, timeStr, sizeof(eventTimeStr) - 1);
+  eventTimeStr[sizeof(eventTimeStr) - 1] = '\0';
+
+  // SMTP mode: send email notification instead
+  if (useSMTP) {
+    char subject[80];
+    snprintf(subject, sizeof(subject), "[%s Alert] Rogue DHCP server detected", (const char*)hostname);
+
+    char body[512];
+    snprintf(body, sizeof(body),
+             "Honeypot: %s (%d.%d.%d.%d)\n"
+             "Timestamp: %s UTC\n"
+             "DHCP server: %d.%d.%d.%d\n"
+             "Advertised gateway: %d.%d.%d.%d\n",
+             (const char*)hostname, honeypotIP[0], honeypotIP[1], honeypotIP[2], honeypotIP[3],
+             eventTimeStr,
+             dhcpServerIp[0], dhcpServerIp[1], dhcpServerIp[2], dhcpServerIp[3],
+             advertisedGatewayIp[0], advertisedGatewayIp[1], advertisedGatewayIp[2], advertisedGatewayIp[3]);
+
+    if (debugMode) {
+      safePrintln("[DEBUG] Queueing rogue DHCP server email...");
+    }
+    queueEmail(subject, body);
+    return;
+  }
+
+  uint8_t dhcpBytes[4] = { dhcpServerIp[0], dhcpServerIp[1], dhcpServerIp[2], dhcpServerIp[3] };
+  uint8_t gwBytes[4] = { advertisedGatewayIp[0], advertisedGatewayIp[1], advertisedGatewayIp[2], advertisedGatewayIp[3] };
+
+  SnmpVarbind varbinds[3];
+  size_t vbCount = 0;
+
+  varbinds[vbCount].oid = OID_HONEYPOT_EVENT_TIME;
+  varbinds[vbCount].oidLen = sizeof(OID_HONEYPOT_EVENT_TIME) / sizeof(uint32_t);
+  varbinds[vbCount].type = SNMP_OCTET_STRING;
+  varbinds[vbCount].bytes = (const uint8_t*)eventTimeStr;
+  varbinds[vbCount].byteLen = strlen(eventTimeStr);
+  vbCount++;
+
+  varbinds[vbCount].oid = OID_INTERNET_DHCP_SERVER;
+  varbinds[vbCount].oidLen = sizeof(OID_INTERNET_DHCP_SERVER) / sizeof(uint32_t);
+  varbinds[vbCount].type = SNMP_IP_ADDRESS;
+  varbinds[vbCount].bytes = dhcpBytes;
+  varbinds[vbCount].byteLen = 4;
+  vbCount++;
+
+  varbinds[vbCount].oid = OID_INTERNET_GATEWAY;
+  varbinds[vbCount].oidLen = sizeof(OID_INTERNET_GATEWAY) / sizeof(uint32_t);
+  varbinds[vbCount].type = SNMP_IP_ADDRESS;
+  varbinds[vbCount].bytes = gwBytes;
+  varbinds[vbCount].byteLen = 4;
+  vbCount++;
+
+  if (debugMode) {
+    safePrintln("[DEBUG] Sending rogue DHCP server trap...");
+  }
+
+  sendTrap(OID_TRAP_ROGUE_DHCP, sizeof(OID_TRAP_ROGUE_DHCP) / sizeof(uint32_t), varbinds, vbCount);
 }
 
 // Remove an IP from all holdoff tracking arrays (called when a device disappears)

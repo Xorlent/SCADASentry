@@ -302,8 +302,13 @@ internetDetectedTrap NOTIFICATION-TYPE
     DESCRIPTION "Internet access was detected on the LAN."
     ::= { scadaSentryNotifications 12 }
 
+rogueDhcpServerTrap NOTIFICATION-TYPE
+    OBJECTS     { honeypotEventTime, internetDhcpServerIp, internetGatewayIp }
+    STATUS      current
+    DESCRIPTION "A DHCP server advertised a default gateway outside this device's configured subnet (possible rogue DHCP server)."
+    ::= { scadaSentryNotifications 13 }
+
 -- Reserved notification OIDs for future functionality:
 --   scadaSentryNotifications 7  = reserved (future "our device" trap)
---   scadaSentryNotifications 13 = reserved
 
 END
