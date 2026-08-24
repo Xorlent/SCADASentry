@@ -123,9 +123,32 @@ static uint8_t buildModules(DeviceModule* out, const ClxPlcInfo& info) {
     dm.isRun = m.isRun;
     dm.majorRevision = m.majorRevision;
     dm.minorRevision = m.minorRevision;
+    strncpy(dm.productName, m.productName.c_str(), sizeof(dm.productName) - 1);
+    dm.productName[sizeof(dm.productName) - 1] = '\0';
     String term = tenableSearchTerm(m.deviceType, m.productName);
     strncpy(dm.searchTerm, term.c_str(), sizeof(dm.searchTerm) - 1);
     dm.searchTerm[sizeof(dm.searchTerm) - 1] = '\0';
+    count++;
+  }
+  return count;
+}
+
+// Build the per-module email info (firmware + Tenable URL) for a PLC's
+// new-device email. Fills `out` (up to MAX_MODULES_PER_PLC entries) and the
+// `urlBuf` scratch buffers, returning the number of modules populated.
+static uint8_t buildModuleEmailInfo(DeviceModuleEmailInfo* out, char urlBuf[][160],
+                                    const DeviceEntry& dev) {
+  uint8_t count = 0;
+  for (uint8_t i = 0; i < dev.moduleCount && i < MAX_MODULES_PER_PLC; i++) {
+    out[i].slot = dev.modules[i].slot;
+    out[i].deviceType = dev.modules[i].deviceType;
+    out[i].productName = dev.modules[i].productName;
+    out[i].majorRevision = dev.modules[i].majorRevision;
+    out[i].minorRevision = dev.modules[i].minorRevision;
+    String url = tenableURL(String(dev.modules[i].searchTerm));
+    strncpy(urlBuf[i], url.c_str(), 159);
+    urlBuf[i][159] = '\0';
+    out[i].tenableUrl = urlBuf[i];
     count++;
   }
   return count;
@@ -264,8 +287,15 @@ void LanScanner::runScan() {
           queryPlcMode(dev);
           dev.hasStatus = true;
           dev.lastStatusCheck = esp_timer_get_time();
+
+          // Build per-module info (firmware + Tenable URL) for the new-device email.
+          DeviceModuleEmailInfo moduleInfos[MAX_MODULES_PER_PLC];
+          char moduleUrlBuf[MAX_MODULES_PER_PLC][160];
+          uint8_t moduleInfoCount = buildModuleEmailInfo(moduleInfos, moduleUrlBuf, dev);
+
           logger->sendNewDeviceTrap(ip, dev.mac, true, dev.vendor, dev.productName,
-                                    dev.firmware, dev.serial, dev.state, dev.mode);
+                                    dev.firmware, dev.serial, dev.state, dev.mode,
+                                    moduleInfos, moduleInfoCount);
         } else {
           logger->sendNewDeviceTrap(ip, dev.mac, false, 0, "", "", "", 0, 0);
         }
@@ -304,9 +334,15 @@ void LanScanner::runScan() {
             queryPlcMode(devices[idx]);
             devices[idx].hasStatus = true;
             devices[idx].lastStatusCheck = esp_timer_get_time();
+
+            DeviceModuleEmailInfo moduleInfos[MAX_MODULES_PER_PLC];
+            char moduleUrlBuf[MAX_MODULES_PER_PLC][160];
+            uint8_t moduleInfoCount = buildModuleEmailInfo(moduleInfos, moduleUrlBuf, devices[idx]);
+
             logger->sendNewDeviceTrap(ip, devices[idx].mac, true, devices[idx].vendor,
                                       devices[idx].productName, devices[idx].firmware,
-                                      devices[idx].serial, devices[idx].state, devices[idx].mode);
+                                      devices[idx].serial, devices[idx].state, devices[idx].mode,
+                                      moduleInfos, moduleInfoCount);
           }
         }
       }
@@ -334,8 +370,14 @@ void LanScanner::runScan() {
       dev.hasStatus = true;
       dev.lastSeen = esp_timer_get_time();
       dev.lastStatusCheck = esp_timer_get_time();
+
+      DeviceModuleEmailInfo moduleInfos[MAX_MODULES_PER_PLC];
+      char moduleUrlBuf[MAX_MODULES_PER_PLC][160];
+      uint8_t moduleInfoCount = buildModuleEmailInfo(moduleInfos, moduleUrlBuf, dev);
+
       logger->sendNewDeviceTrap(dev.ip, dev.mac, true, dev.vendor, dev.productName,
-                                dev.firmware, dev.serial, dev.state, dev.mode);
+                                dev.firmware, dev.serial, dev.state, dev.mode,
+                                moduleInfos, moduleInfoCount);
       addDevice(dev);
 
       char buf[160];
@@ -355,7 +397,7 @@ void LanScanner::runScan() {
       snprintf(buf, sizeof(buf), "Device disappeared: %d.%d.%d.%d",
                devices[i].ip[0], devices[i].ip[1], devices[i].ip[2], devices[i].ip[3]);
       logger->safePrintln(buf);
-      logger->sendDeviceGoneTrap(devices[i].ip, devices[i].mac);
+      logger->sendDeviceGoneTrap(devices[i].ip, devices[i].mac, devices[i].isPlc);
       logger->removeIPFromHoldoff(devices[i].ip);
       removeDevice(i);
     }
@@ -484,7 +526,10 @@ void LanScanner::checkStatus(DeviceEntry& dev, bool doExpansionCheck) {
     snprintf(buf, sizeof(buf), "PLC firmware change: %d.%d.%d.%d %s -> %s",
              dev.ip[0], dev.ip[1], dev.ip[2], dev.ip[3], dev.firmware, freshFirmware);
     logger->safePrintln(buf);
-    logger->sendDeviceFirmwareChangeTrap(dev.ip, dev.mac, dev.firmware, freshFirmware, 2 /* unknown */);
+    String cpuUrl = tenableURL(tenableSearchTerm(0x0E, info.productName));
+    logger->sendDeviceFirmwareChangeTrap(dev.ip, dev.mac, dev.productName,
+                                         dev.firmware, freshFirmware, 2 /* unknown */,
+                                         cpuUrl.c_str());
     strncpy(dev.prevFirmware, dev.firmware, sizeof(dev.prevFirmware) - 1);
     dev.prevFirmware[sizeof(dev.prevFirmware) - 1] = '\0';
     strncpy(dev.firmware, freshFirmware, sizeof(dev.firmware) - 1);
@@ -501,6 +546,33 @@ void LanScanner::checkStatus(DeviceEntry& dev, bool doExpansionCheck) {
     dev.prevMode = dev.mode;
     dev.mode = freshMode;
   }
+  // Ethernet module firmware change detection (email-only notification).
+  for (size_t i = 0; i < info.modules.size(); i++) {
+    const ClxModule& m = info.modules[i];
+    if (m.deviceType != 0x0C) continue;  // only Ethernet modules
+    const DeviceModule* old = nullptr;
+    for (uint8_t j = 0; j < dev.moduleCount; j++) {
+      if (dev.modules[j].slot == m.slot) { old = &dev.modules[j]; break; }
+    }
+    if (old == nullptr) continue;  // newly added module, not a firmware change
+    if (old->majorRevision == m.majorRevision && old->minorRevision == m.minorRevision) continue;
+
+    char prevFw[16], newFw[16];
+    snprintf(prevFw, sizeof(prevFw), "%u.%u", (unsigned)old->majorRevision, (unsigned)old->minorRevision);
+    snprintf(newFw, sizeof(newFw), "%u.%u", (unsigned)m.majorRevision, (unsigned)m.minorRevision);
+    String url = tenableURL(tenableSearchTerm(m.deviceType, m.productName));
+
+    char buf[128];
+    snprintf(buf, sizeof(buf), "PLC Ethernet module (slot %u) firmware change: %s -> %s",
+             (unsigned)m.slot, prevFw, newFw);
+    logger->safePrintln(buf);
+
+    logger->sendEthernetModuleFirmwareChangeTrap(dev.ip, dev.mac, m.slot,
+                                                 m.productName.c_str(), prevFw, newFw,
+                                                 url.c_str());
+  }
+
+
 
   // CPU/Ethernet module change
   if (!modulesEqual(freshModules, freshCount, dev.modules, dev.moduleCount)) {

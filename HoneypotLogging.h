@@ -67,8 +67,21 @@ struct IPLogEntry {
 
 // Email queue entry structure for async SMTP processing
 struct EmailQueueEntry {
-  char subject[80];
-  char body[512];
+  char subject[128];
+  char body[2048];
+  bool isHtml;
+};
+
+// A CPU or Ethernet module on a PLC backplane, used to build the new-device
+// email's module table. The pointers reference caller-owned buffers that remain
+// valid for the duration of the sendNewDeviceTrap() call.
+struct DeviceModuleEmailInfo {
+  uint8_t slot;
+  uint16_t deviceType;   // 0x0E = CPU, 0x0C = Ethernet module
+  const char* productName;
+  uint8_t majorRevision;
+  uint8_t minorRevision;
+  const char* tenableUrl;
 };
 
 // SNMP trap OID constants are defined in HoneypotLogging.cpp
@@ -142,7 +155,7 @@ private:
   // Helper methods
   bool isBroadcastOrMulticast(uint32_t source_ip, IPAddress localIP, IPAddress subnetMask);
   bool shouldLogEvent(uint32_t ip, ProtocolType protocol);
-  bool sendSMTPEmail(const char* subject, const char* body);
+  bool sendSMTPEmail(const char* subject, const char* body, bool isHtml = false);
   void sendTrap(const uint32_t* trapOid, size_t trapOidLen, const SnmpVarbind* varbinds, size_t varbindCount);
   
 public:
@@ -168,7 +181,7 @@ public:
   
   // SMTP async methods
   void beginSMTPTask();
-  bool queueEmail(const char* subject, const char* body);
+  bool queueEmail(const char* subject, const char* body, bool isHtml = false);
   
   // Event queuing (lwIP task context, uses critical sections)
   bool enqueueLogEvent(EventType eventType, uint16_t portOrType, uint32_t sourceIP, ProtocolType protocol, uint8_t ianaProtocol, const char* serviceName = "unknown");
@@ -185,11 +198,18 @@ public:
   // LAN-discovered device notifications (called from the LAN scanner task)
   void sendNewDeviceTrap(IPAddress deviceIp, const uint8_t mac[6], bool isPlc,
                          uint16_t vendor, const char* productName, const char* firmware,
-                         const char* serial, uint8_t state, int32_t mode);
-  void sendDeviceGoneTrap(IPAddress deviceIp, const uint8_t mac[6]);
+                         const char* serial, uint8_t state, int32_t mode,
+                         const DeviceModuleEmailInfo* modules = nullptr, uint8_t moduleCount = 0);
+  void sendDeviceGoneTrap(IPAddress deviceIp, const uint8_t mac[6], bool isPlc);
   void sendDeviceModeChangeTrap(IPAddress deviceIp, const uint8_t mac[6], int32_t prevMode, int32_t mode);
   void sendDeviceFirmwareChangeTrap(IPAddress deviceIp, const uint8_t mac[6],
-                                    const char* prevFirmware, const char* firmware, int32_t vulnerable);
+                                    const char* productName,
+                                    const char* prevFirmware, const char* firmware,
+                                    int32_t vulnerable, const char* tenableUrl);
+  void sendEthernetModuleFirmwareChangeTrap(IPAddress deviceIp, const uint8_t mac[6],
+                                            uint8_t slot, const char* productName,
+                                            const char* prevFirmware, const char* firmware,
+                                            const char* tenableUrl);
 
   // Internet detection notification (called from the Internet detection task)
   void sendInternetDetectedTrap(IPAddress gatewayIp, IPAddress dhcpServerIp,

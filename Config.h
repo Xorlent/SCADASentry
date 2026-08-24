@@ -133,9 +133,9 @@ const bool DEBUG = true;
 
 ////////// Holdoff Configuration //////////
 
-    // Prevents flooding the trap receiver with repeated events from the same IP
+    // Prevents flooding the trap receiver or email with repeated events from the same IP
 
-    // Maximum unique IPs to track per protocol
+    // Maximum unique IPs the honeypot can track per protocol
     #define MAX_TRACKED_IPS 50
 
     // Holdoff time in seconds for each protocol (0 = disabled)
@@ -148,8 +148,8 @@ const bool DEBUG = true;
     // Scans the local LAN for devices and reports them via SNMP traps.
     // See README.md "SNMP Trap Reference" for the trap OIDs.
 
-    // Maximum number of LAN devices to track
-    #define MAX_DEVICES 252
+    // Maximum number of LAN devices to track (can be up to 252)
+    #define MAX_DEVICES 200
 
     // Interval between LAN scans, in seconds
     const uint32_t LAN_SCAN_INTERVAL_SECONDS = 240;
@@ -183,7 +183,9 @@ const bool DEBUG = true;
     // Internet access is identified by (1) a DHCP server responding on the segment
     // (which should not exist on a PLC LAN) and (2) Internet reachability
     // through the gateway. Reports via the internetDetectedTrap SNMP trap.
-    // See README.md "SNMP Trap Reference" for the trap OID.
+    // A DHCP server that advertises a gateway outside this device's configured
+    // subnet is treated as rogue and reported via the rogueDhcpServerTrap.
+    // See README.md "SNMP Trap Reference" for the trap OIDs.
 
     // Enable Internet detection
     const bool DETECT_INTERNET = true;

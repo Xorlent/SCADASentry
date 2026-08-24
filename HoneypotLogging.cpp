@@ -90,6 +90,15 @@ static const char* deviceStateName(uint8_t state) {
   }
 }
 
+// Human-readable name for an Internet detection method (internetDetectionMethod).
+static const char* internetMethodName(int32_t m) {
+  switch (m) {
+    case 1: return "TCP connect";
+    case 2: return "DNS query";
+    default: return "none";
+  }
+}
+
 // Constructor
 HoneypotLogging::HoneypotLogging(const uint8_t* hostName, IPAddress localIP, IPAddress snmpTrapSvr, uint16_t snmpTrapPt,
                                  const char* snmpCommunityStr,
@@ -315,7 +324,7 @@ void HoneypotLogging::smtpTask(void* parameter) {
       // email is not misrouted or lost.
       xSemaphoreTake(logger->gatewayMutex, portMAX_DELAY);
       // Send email (blocks this task, main loop continues)
-      logger->sendSMTPEmail(email.subject, email.body);
+      logger->sendSMTPEmail(email.subject, email.body, email.isHtml);
       xSemaphoreGive(logger->gatewayMutex);
       
       // Small delay between emails
@@ -325,7 +334,7 @@ void HoneypotLogging::smtpTask(void* parameter) {
 }
 
 // Queue email for async sending (non-blocking)
-bool HoneypotLogging::queueEmail(const char* subject, const char* body) {
+bool HoneypotLogging::queueEmail(const char* subject, const char* body, bool isHtml) {
   // Fail silently if SMTP not enabled or queue not created
   if (!useSMTP || emailQueue == NULL) {
     return false;
@@ -336,6 +345,7 @@ bool HoneypotLogging::queueEmail(const char* subject, const char* body) {
   strncpy(email.subject, subject, sizeof(email.subject) - 1);
   email.subject[sizeof(email.subject) - 1] = '\0';
   strncpy(email.body, body, sizeof(email.body) - 1);
+  email.isHtml = isHtml;
   email.body[sizeof(email.body) - 1] = '\0';
   
   // Non-blocking send to queue
@@ -551,7 +561,7 @@ bool HoneypotLogging::shouldLogIP(uint32_t sourceIP, ProtocolType protocol,
 }
 
 // Send email via SMTP relay
-bool HoneypotLogging::sendSMTPEmail(const char* subject, const char* body) {
+bool HoneypotLogging::sendSMTPEmail(const char* subject, const char* body, bool isHtml) {
   if (debugMode) {
     safePrintln("[DEBUG] Connecting to SMTP server...");
   }
@@ -636,7 +646,11 @@ bool HoneypotLogging::sendSMTPEmail(const char* subject, const char* body) {
   smtpClient.println(smtpTo);
   smtpClient.print("Subject: ");
   smtpClient.println(subject);
-  smtpClient.println("Content-Type: text/plain; charset=utf-8");
+  if (isHtml) {
+    smtpClient.println("Content-Type: text/html; charset=utf-8");
+  } else {
+    smtpClient.println("Content-Type: text/plain; charset=utf-8");
+  }
   smtpClient.println();
   
   // Email body
@@ -686,7 +700,7 @@ void HoneypotLogging::logEvent(EventType eventType, uint16_t portOrType, IPAddre
   // SMTP mode: send email instead
   if (useSMTP) {
     // Build email subject
-    char subject[80];
+    char subject[128];
     snprintf(subject, sizeof(subject), "[%s Alert] Honeypot traffic detected (%s)", 
              (const char*)hostname, eventTypeName(eventType));
 
@@ -810,7 +824,7 @@ void HoneypotLogging::sendDeviceOnlineTrap(DeviceOnlineReason reason) {
 
   // SMTP mode: send email notification instead
   if (useSMTP) {
-    char subject[80];
+    char subject[128];
     snprintf(subject, sizeof(subject), "[%s Alert] Device online (%s)", (const char*)hostname, reasonStr);
     char body[256];
     snprintf(body, sizeof(body),
@@ -862,7 +876,8 @@ void HoneypotLogging::sendDeviceOnlineTrap(DeviceOnlineReason reason) {
 // Send a newDeviceDiscoveredTrap for a LAN-discovered device
 void HoneypotLogging::sendNewDeviceTrap(IPAddress deviceIp, const uint8_t mac[6], bool isPlc,
                                         uint16_t vendor, const char* productName, const char* firmware,
-                                        const char* serial, uint8_t state, int32_t mode) {
+                                        const char* serial, uint8_t state, int32_t mode,
+                                        const DeviceModuleEmailInfo* modules, uint8_t moduleCount) {
   char eventTimeStr[32];
   const char* timeStr = ntpClient->formattedTime("%Y-%m-%dT%H:%M:%SZ");
   strncpy(eventTimeStr, timeStr, sizeof(eventTimeStr) - 1);
@@ -870,33 +885,60 @@ void HoneypotLogging::sendNewDeviceTrap(IPAddress deviceIp, const uint8_t mac[6]
 
   // SMTP mode: send email notification instead
   if (useSMTP) {
-    char subject[80];
-    snprintf(subject, sizeof(subject), "[%s Alert] New device discovered", (const char*)hostname);
+    char subject[128];
+    snprintf(subject, sizeof(subject), "[%s Alert] New %s discovered",
+             (const char*)hostname, isPlc ? "PLC" : "device");
 
     char macStr[18];
     snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
              (unsigned)mac[0], (unsigned)mac[1], (unsigned)mac[2],
              (unsigned)mac[3], (unsigned)mac[4], (unsigned)mac[5]);
 
-    char body[512];
+    char body[2048];
+    bool html = false;
     if (isPlc) {
-      snprintf(body, sizeof(body),
-               "Honeypot: %s (%d.%d.%d.%d)\n"
-               "Timestamp: %s UTC\n"
-               "Device IP: %d.%d.%d.%d\n"
-               "MAC: %s\n"
-               "Type: ControlLogix PLC\n"
-               "Product: %s\n"
-               "Firmware: %s\n"
-               "Serial: %s\n"
-               "State: %s\n"
-               "Mode: %s\n",
+      html = true;
+
+      // Mode cell: "RUN" in bold green, otherwise "NOT IN RUN" in bold red.
+      char modeHtml[64];
+      if (mode == 1) {
+        snprintf(modeHtml, sizeof(modeHtml), "<b style=\"color:green\">RUN</b>");
+      } else {
+        snprintf(modeHtml, sizeof(modeHtml), "<b style=\"color:red\">NOT IN RUN</b>");
+      }
+
+      int len = snprintf(body, sizeof(body),
+               "<html><body>"
+               "<h3>New PLC discovered</h3>"
+               "<table>"
+               "<tr><td><b>Honeypot:</b></td><td>%s (%d.%d.%d.%d)</td></tr>"
+               "<tr><td><b>Timestamp:</b></td><td>%s UTC</td></tr>"
+               "<tr><td><b>Device IP:</b></td><td>%d.%d.%d.%d</td></tr>"
+               "<tr><td><b>MAC:</b></td><td>%s</td></tr>"
+               "<tr><td><b>Serial:</b></td><td>%s</td></tr>"
+               "<tr><td><b>State:</b></td><td>%s</td></tr>"
+               "<tr><td><b>Mode:</b></td><td>%s</td></tr>"
+               "</table>"
+               "<h4>Backplane modules</h4>"
+               "<table>",
                (const char*)hostname, honeypotIP[0], honeypotIP[1], honeypotIP[2], honeypotIP[3],
                eventTimeStr,
                deviceIp[0], deviceIp[1], deviceIp[2], deviceIp[3],
                macStr,
-               productName, firmware, serial,
-               deviceStateName(state), deviceModeName(mode));
+               serial,
+               deviceStateName(state), modeHtml);
+
+      for (uint8_t i = 0; i < moduleCount; i++) {
+        const DeviceModuleEmailInfo& m = modules[i];
+        const char* typeStr = (m.deviceType == 0x0E) ? "CPU" : "Ethernet";
+        len += snprintf(body + len, sizeof(body) - len,
+                 "<tr><td>Slot %u (%s)</td><td>%s</td><td>%u.%u</td>"
+                 "<td><a href=\"%s\">CVE search</a></td></tr>",
+                 (unsigned)m.slot, typeStr, m.productName,
+                 (unsigned)m.majorRevision, (unsigned)m.minorRevision,
+                 m.tenableUrl);
+      }
+      len += snprintf(body + len, sizeof(body) - len, "</table></body></html>");
     } else {
       snprintf(body, sizeof(body),
                "Honeypot: %s (%d.%d.%d.%d)\n"
@@ -913,7 +955,7 @@ void HoneypotLogging::sendNewDeviceTrap(IPAddress deviceIp, const uint8_t mac[6]
     if (debugMode) {
       safePrintln("[DEBUG] Queueing new device email...");
     }
-    queueEmail(subject, body);
+    queueEmail(subject, body, html);
     return;
   }
 
@@ -996,7 +1038,7 @@ void HoneypotLogging::sendNewDeviceTrap(IPAddress deviceIp, const uint8_t mac[6]
 }
 
 // Send a deviceDisappearedTrap for a device that no longer responds to ping
-void HoneypotLogging::sendDeviceGoneTrap(IPAddress deviceIp, const uint8_t mac[6]) {
+void HoneypotLogging::sendDeviceGoneTrap(IPAddress deviceIp, const uint8_t mac[6], bool isPlc) {
   char eventTimeStr[32];
   const char* timeStr = ntpClient->formattedTime("%Y-%m-%dT%H:%M:%SZ");
   strncpy(eventTimeStr, timeStr, sizeof(eventTimeStr) - 1);
@@ -1004,8 +1046,9 @@ void HoneypotLogging::sendDeviceGoneTrap(IPAddress deviceIp, const uint8_t mac[6
 
   // SMTP mode: send email notification instead
   if (useSMTP) {
-    char subject[80];
-    snprintf(subject, sizeof(subject), "[%s Alert] Device disappeared", (const char*)hostname);
+    char subject[128];
+    snprintf(subject, sizeof(subject), "[%s Alert] %s disappeared",
+             (const char*)hostname, isPlc ? "PLC" : "Device");
 
     char macStr[18];
     snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
@@ -1073,9 +1116,12 @@ void HoneypotLogging::sendDeviceModeChangeTrap(IPAddress deviceIp, const uint8_t
 
   // SMTP mode: send email notification instead
   if (useSMTP) {
-    char subject[80];
-    snprintf(subject, sizeof(subject), "[%s %s] Device mode changed",
-             (const char*)hostname, (mode == 1) ? "Notice" : "Alert");
+    char subject[128];
+    if (mode == 1) {
+      snprintf(subject, sizeof(subject), "[%s Alert CLEARED] PLC returned to RUN mode", (const char*)hostname);
+    } else {
+      snprintf(subject, sizeof(subject), "[%s Alert] PLC not in RUN mode!", (const char*)hostname);
+    }
 
     char macStr[18];
     snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
@@ -1149,7 +1195,9 @@ void HoneypotLogging::sendDeviceModeChangeTrap(IPAddress deviceIp, const uint8_t
 
 // Send a deviceFirmwareChangedTrap for a ControlLogix firmware change
 void HoneypotLogging::sendDeviceFirmwareChangeTrap(IPAddress deviceIp, const uint8_t mac[6],
-                                                   const char* prevFirmware, const char* firmware, int32_t vulnerable) {
+                                                   const char* productName,
+                                                   const char* prevFirmware, const char* firmware,
+                                                   int32_t vulnerable, const char* tenableUrl) {
   char eventTimeStr[32];
   const char* timeStr = ntpClient->formattedTime("%Y-%m-%dT%H:%M:%SZ");
   strncpy(eventTimeStr, timeStr, sizeof(eventTimeStr) - 1);
@@ -1157,31 +1205,40 @@ void HoneypotLogging::sendDeviceFirmwareChangeTrap(IPAddress deviceIp, const uin
 
   // SMTP mode: send email notification instead
   if (useSMTP) {
-    char subject[80];
-    snprintf(subject, sizeof(subject), "[%s Notice] Device firmware changed", (const char*)hostname);
+    char subject[128];
+    snprintf(subject, sizeof(subject), "[%s Notice] PLC CPU firmware changed", (const char*)hostname);
 
     char macStr[18];
     snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
              (unsigned)mac[0], (unsigned)mac[1], (unsigned)mac[2],
              (unsigned)mac[3], (unsigned)mac[4], (unsigned)mac[5]);
 
-    char body[256];
+    char body[640];
     snprintf(body, sizeof(body),
-             "Honeypot: %s (%d.%d.%d.%d)\n"
-             "Timestamp: %s UTC\n"
-             "Device IP: %d.%d.%d.%d\n"
-             "MAC: %s\n"
-             "Firmware: %s -> %s\n",
+             "<html><body>"
+             "<h3>PLC CPU firmware changed</h3>"
+             "<table>"
+             "<tr><td><b>Honeypot:</b></td><td>%s (%d.%d.%d.%d)</td></tr>"
+             "<tr><td><b>Timestamp:</b></td><td>%s UTC</td></tr>"
+             "<tr><td><b>Device IP:</b></td><td>%d.%d.%d.%d</td></tr>"
+             "<tr><td><b>MAC:</b></td><td>%s</td></tr>"
+             "<tr><td><b>Product:</b></td><td>%s</td></tr>"
+             "<tr><td><b>Firmware:</b></td><td>%s -&gt; %s</td></tr>"
+             "</table>"
+             "<p><a href=\"%s\">Tenable CVE search</a></p>"
+             "</body></html>",
              (const char*)hostname, honeypotIP[0], honeypotIP[1], honeypotIP[2], honeypotIP[3],
              eventTimeStr,
              deviceIp[0], deviceIp[1], deviceIp[2], deviceIp[3],
              macStr,
-             prevFirmware, firmware);
+             productName,
+             prevFirmware, firmware,
+             tenableUrl);
 
     if (debugMode) {
       safePrintln("[DEBUG] Queueing device firmware change email...");
     }
-    queueEmail(subject, body);
+    queueEmail(subject, body, true);
     return;
   }
 
@@ -1238,6 +1295,60 @@ void HoneypotLogging::sendDeviceFirmwareChangeTrap(IPAddress deviceIp, const uin
   sendTrap(OID_TRAP_DEVICE_FW_CHANGE, sizeof(OID_TRAP_DEVICE_FW_CHANGE) / sizeof(uint32_t), varbinds, vbCount);
 }
 
+// Send an email notification when a PLC Ethernet module's firmware changes.
+// There is no dedicated SNMP trap OID for Ethernet module firmware changes, so
+// this only produces an SMTP email (the caller logs the change to serial).
+void HoneypotLogging::sendEthernetModuleFirmwareChangeTrap(IPAddress deviceIp, const uint8_t mac[6],
+                                                           uint8_t slot, const char* productName,
+                                                           const char* prevFirmware, const char* firmware,
+                                                           const char* tenableUrl) {
+  if (!useSMTP) {
+    return;
+  }
+
+  char eventTimeStr[32];
+  const char* timeStr = ntpClient->formattedTime("%Y-%m-%dT%H:%M:%SZ");
+  strncpy(eventTimeStr, timeStr, sizeof(eventTimeStr) - 1);
+  eventTimeStr[sizeof(eventTimeStr) - 1] = '\0';
+
+  char subject[128];
+  snprintf(subject, sizeof(subject), "[%s Notice] PLC Ethernet module firmware changed", (const char*)hostname);
+
+  char macStr[18];
+  snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+           (unsigned)mac[0], (unsigned)mac[1], (unsigned)mac[2],
+           (unsigned)mac[3], (unsigned)mac[4], (unsigned)mac[5]);
+
+  char body[640];
+  snprintf(body, sizeof(body),
+           "<html><body>"
+           "<h3>PLC Ethernet module firmware changed</h3>"
+           "<table>"
+           "<tr><td><b>Honeypot:</b></td><td>%s (%d.%d.%d.%d)</td></tr>"
+           "<tr><td><b>Timestamp:</b></td><td>%s UTC</td></tr>"
+           "<tr><td><b>Device IP:</b></td><td>%d.%d.%d.%d</td></tr>"
+           "<tr><td><b>MAC:</b></td><td>%s</td></tr>"
+           "<tr><td><b>Slot:</b></td><td>%u</td></tr>"
+           "<tr><td><b>Module:</b></td><td>%s</td></tr>"
+           "<tr><td><b>Firmware:</b></td><td>%s -&gt; %s</td></tr>"
+           "</table>"
+           "<p><a href=\"%s\">Tenable CVE search</a></p>"
+           "</body></html>",
+           (const char*)hostname, honeypotIP[0], honeypotIP[1], honeypotIP[2], honeypotIP[3],
+           eventTimeStr,
+           deviceIp[0], deviceIp[1], deviceIp[2], deviceIp[3],
+           macStr,
+           (unsigned)slot,
+           productName,
+           prevFirmware, firmware,
+           tenableUrl);
+
+  if (debugMode) {
+    safePrintln("[DEBUG] Queueing Ethernet module firmware change email...");
+  }
+  queueEmail(subject, body, true);
+}
+
 // Send an internetDetectedTrap when Internet access is detected.
 void HoneypotLogging::sendInternetDetectedTrap(IPAddress gatewayIp, IPAddress dhcpServerIp,
                                                bool internetAccessible, int32_t detectionMethod) {
@@ -1248,23 +1359,31 @@ void HoneypotLogging::sendInternetDetectedTrap(IPAddress gatewayIp, IPAddress dh
 
   // SMTP mode: send email notification instead
   if (useSMTP) {
-    char subject[80];
-    snprintf(subject, sizeof(subject), "[%s Alert] Internet access detected", (const char*)hostname);
+    char subject[128];
+    snprintf(subject, sizeof(subject), "[%s Alert] PLC LAN direct Internet access detected!", (const char*)hostname);
 
-    char body[512];
-    snprintf(body, sizeof(body),
+    char body[640];
+    int len = snprintf(body, sizeof(body),
              "Honeypot: %s (%d.%d.%d.%d)\n"
              "Timestamp: %s UTC\n"
-             "Gateway: %d.%d.%d.%d\n"
-             "DHCP server: %d.%d.%d.%d\n"
-             "Internet access: %s\n"
-             "Detection method: %s\n",
+             "Gateway: %d.%d.%d.%d\n",
              (const char*)hostname, honeypotIP[0], honeypotIP[1], honeypotIP[2], honeypotIP[3],
              eventTimeStr,
-             gatewayIp[0], gatewayIp[1], gatewayIp[2], gatewayIp[3],
-             dhcpServerIp[0], dhcpServerIp[1], dhcpServerIp[2], dhcpServerIp[3],
+             gatewayIp[0], gatewayIp[1], gatewayIp[2], gatewayIp[3]);
+
+    // Only include the DHCP server when the successful test used the
+    // DHCP-advertised gateway (dhcpServerIp is 0.0.0.0 otherwise).
+    if (dhcpServerIp != IPAddress(0, 0, 0, 0)) {
+      len += snprintf(body + len, sizeof(body) - len,
+                      "DHCP server: %d.%d.%d.%d\n",
+                      dhcpServerIp[0], dhcpServerIp[1], dhcpServerIp[2], dhcpServerIp[3]);
+    }
+
+    len += snprintf(body + len, sizeof(body) - len,
+             "Internet access: %s\n"
+             "Detection method: %s\n",
              internetAccessible ? "accessible" : "not accessible",
-             detectionMethod == 1 ? "TCP connect" : "DNS query");
+             internetMethodName(detectionMethod));
 
     if (debugMode) {
       safePrintln("[DEBUG] Queueing Internet detection email...");
@@ -1329,7 +1448,7 @@ void HoneypotLogging::sendRogueDhcpTrap(IPAddress dhcpServerIp, IPAddress advert
 
   // SMTP mode: send email notification instead
   if (useSMTP) {
-    char subject[80];
+    char subject[128];
     snprintf(subject, sizeof(subject), "[%s Alert] Rogue DHCP server detected", (const char*)hostname);
 
     char body[512];

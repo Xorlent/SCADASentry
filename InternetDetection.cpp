@@ -378,9 +378,11 @@ bool InternetDetection::runDetection() {
   }
 
   // 3. Internet access detected. Report the gateway that provided it and the
-  //    DHCP server (0.0.0.0 if none was found).
+  //    DHCP server only if the successful test used the DHCP-advertised gateway
+  //    (0.0.0.0 otherwise, so the email omits the DHCP server line).
   IPAddress noDhcp(0, 0, 0, 0);
-  logger->sendInternetDetectedTrap(testedGateway, dhcpDetected ? dhcpServer : noDhcp,
+  bool usedDhcpGateway = dhcpDetected && (testedGateway == dhcpGateway);
+  logger->sendInternetDetectedTrap(testedGateway, usedDhcpGateway ? dhcpServer : noDhcp,
                                    internetAccessible, (int32_t)method);
   return true;
 }
