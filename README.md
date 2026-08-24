@@ -101,10 +101,10 @@ All traps are SNMPv2c, sent to UDP port 162 (configurable). Import `SCADASENTRY-
 
 | Trap | OID | Varbinds |
 |------|-----|----------|
-| `newDeviceDiscoveredTrap` | `1.3.6.1.4.1.99999.0.8` | eventTime, deviceIp, deviceMac, (PLC: vendor, productName, firmware, serial, state, mode) |
+| `newDeviceDiscoveredTrap` | `1.3.6.1.4.1.99999.0.8` | eventTime, deviceIp, deviceMac, (PLC: vendor, productName, firmware, serial, state, mode, and per-module slot/type/productName/firmware) |
 | `deviceDisappearedTrap` | `1.3.6.1.4.1.99999.0.9` | eventTime, deviceIp, deviceMac |
 | `deviceModeChangedTrap` | `1.3.6.1.4.1.99999.0.10` | eventTime, deviceIp, deviceMac, prevMode, mode |
-| `deviceFirmwareChangedTrap` | `1.3.6.1.4.1.99999.0.11` | eventTime, deviceIp, deviceMac, prevFirmware, firmware, firmwareVulnerable |
+| `deviceFirmwareChangedTrap` | `1.3.6.1.4.1.99999.0.11` | eventTime, deviceIp, deviceMac, moduleSlot, moduleType, moduleProductName, modulePreviousFirmware, moduleFirmware |
 | `internetDetectedTrap` | `1.3.6.1.4.1.99999.0.12` | eventTime, gatewayIp, dhcpServerIp, internetAccessible, detectionMethod |
 | `rogueDhcpServerTrap` | `1.3.6.1.4.1.99999.0.13` | eventTime, dhcpServerIp, gatewayIp |
 
@@ -122,13 +122,17 @@ Every trap also carries the standard `sysUpTime.0` (TimeTicks) and `snmpTrapOID.
 | `.1.11.0` | `deviceSerial` | OCTET STRING |
 | `.1.12.0` | `deviceState` | INTEGER (enum) |
 | `.1.13.0` | `deviceMode` | INTEGER (enum) |
-| `.1.14.0` | `devicePreviousFirmwareVersion` | OCTET STRING |
 | `.1.15.0` | `devicePreviousMode` | INTEGER (enum) |
-| `.1.16.0` | `deviceFirmwareVulnerable` | INTEGER (enum) |
 | `.1.21.0` | `internetDhcpServerIp` | IpAddress |
 | `.1.22.0` | `internetAccessible` | INTEGER (enum) |
 | `.1.23.0` | `internetDetectionMethod` | INTEGER (enum) |
 | `.1.24.0` | `internetGatewayIp` | IpAddress |
+| `.1.25.1.1` | `moduleIndex` | INTEGER |
+| `.1.25.1.2` | `moduleSlot` | INTEGER (0 = CPU) |
+| `.1.25.1.3` | `moduleType` | INTEGER (enum) |
+| `.1.25.1.4` | `moduleProductName` | OCTET STRING |
+| `.1.25.1.5` | `moduleFirmware` | OCTET STRING |
+| `.1.25.1.6` | `modulePreviousFirmware` | OCTET STRING |
 
 ### Enumerated varbinds (translated by the MIB)
 
@@ -137,7 +141,7 @@ Every trap also carries the standard `sysUpTime.0` (TimeTicks) and `snmpTrapOID.
 - `honeypotIcmpType`: `ping(8)`, `pingExtended(42)`
 - `deviceState`: `nonexistent(0)`, `selfTesting(1)`, `standby(2)`, `operational(3)`, `majorRecoverableFault(4)`, `majorUnrecoverableFault(5)`, `communicationFault(6)`, `unconfigured(7)`
 - `deviceMode`: `program(0)`, `run(1)`, `testRemote(2)`
-- `deviceFirmwareVulnerable`: `notVulnerable(0)`, `vulnerable(1)`, `unknown(2)`
+- `moduleType`: `cpu(14)`, `ethernet(12)`
 - `internetAccessible`: `no(0)`, `yes(1)`
 - `internetDetectionMethod`: `none(0)`, `tcpConnect(1)`, `dnsQuery(2)`
 

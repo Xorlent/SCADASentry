@@ -42,7 +42,7 @@ static int32_t keyswitchToMode(const String& keyswitch) {
 
 // Human-readable run status (the only thing we care about).
 static const char* modeName(int32_t mode) {
-  return (mode == 1) ? "in RUN" : "NOT in RUN";
+  return (mode == 1) ? "in RUN" : "***NOT in RUN***";
 }
 
 // Find a discovery result matching an IP address (or nullptr).
@@ -180,15 +180,16 @@ static bool modulesEqual(const DeviceModule* a, uint8_t na,
   return true;
 }
 
-// Print the Tenable URL for each detected module (debug), with slot, name and
-// firmware revision.
+// Print each detected module (debug): slot, type (CPU/Ethernet), name, firmware
+// revision, and Tenable URL.
 static void printModuleUrls(HoneypotLogging* logger, const ClxPlcInfo& info) {
   for (size_t i = 0; i < info.modules.size(); i++) {
     const ClxModule& m = info.modules[i];
+    const char* typeStr = (m.deviceType == 0x0E) ? "CPU" : "Ethernet";
     String url = tenableURL(tenableSearchTerm(m.deviceType, m.productName));
     char buf[256];
-    snprintf(buf, sizeof(buf), "[DEBUG] Slot %u is a %s running firmware %u.%u: %s",
-             (unsigned)m.slot, m.productName.c_str(),
+    snprintf(buf, sizeof(buf), "[DEBUG] Slot %u (%s): %s fw %u.%u - %s",
+             (unsigned)m.slot, typeStr, m.productName.c_str(),
              (unsigned)m.majorRevision, (unsigned)m.minorRevision, url.c_str());
     logger->safePrintln(buf);
   }
@@ -301,7 +302,7 @@ void LanScanner::runScan() {
         }
         addDevice(dev);
         {
-          char buf[160];
+          char buf[256];
           if (dev.isPlc) {
             snprintf(buf, sizeof(buf),
                      "New device: %d.%d.%d.%d (MAC %02X:%02X:%02X:%02X:%02X:%02X) - PLC %s fw %s mode %s",
@@ -380,7 +381,7 @@ void LanScanner::runScan() {
                                 moduleInfos, moduleInfoCount);
       addDevice(dev);
 
-      char buf[160];
+      char buf[256];
       snprintf(buf, sizeof(buf), "New device: %d.%d.%d.%d - PLC %s fw %s mode %s (no ARP response)",
                dev.ip[0], dev.ip[1], dev.ip[2], dev.ip[3], dev.productName, dev.firmware, modeName(dev.mode));
       logger->safePrintln(buf);
@@ -528,7 +529,7 @@ void LanScanner::checkStatus(DeviceEntry& dev, bool doExpansionCheck) {
     logger->safePrintln(buf);
     String cpuUrl = tenableURL(tenableSearchTerm(0x0E, info.productName));
     logger->sendDeviceFirmwareChangeTrap(dev.ip, dev.mac, dev.productName,
-                                         dev.firmware, freshFirmware, 2 /* unknown */,
+                                         dev.firmware, freshFirmware,
                                          cpuUrl.c_str());
     strncpy(dev.prevFirmware, dev.firmware, sizeof(dev.prevFirmware) - 1);
     dev.prevFirmware[sizeof(dev.prevFirmware) - 1] = '\0';

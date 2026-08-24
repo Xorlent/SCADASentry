@@ -154,13 +154,6 @@ deviceMode OBJECT-TYPE
     DESCRIPTION "Run-switch mode of a discovered ControlLogix device."
     ::= { scadaSentryObjects 13 }
 
-devicePreviousFirmwareVersion OBJECT-TYPE
-    SYNTAX      DisplayString (SIZE (0..32))
-    MAX-ACCESS  accessible-for-notify
-    STATUS      current
-    DESCRIPTION "Previous firmware revision before a change was detected."
-    ::= { scadaSentryObjects 14 }
-
 devicePreviousMode OBJECT-TYPE
     SYNTAX      INTEGER {
                     program(0),
@@ -171,17 +164,6 @@ devicePreviousMode OBJECT-TYPE
     STATUS      current
     DESCRIPTION "Previous run-switch mode before a change was detected."
     ::= { scadaSentryObjects 15 }
-
-deviceFirmwareVulnerable OBJECT-TYPE
-    SYNTAX      INTEGER {
-                    notVulnerable(0),
-                    vulnerable(1),
-                    unknown(2)
-                }
-    MAX-ACCESS  accessible-for-notify
-    STATUS      current
-    DESCRIPTION "Whether the current firmware is known to be vulnerable."
-    ::= { scadaSentryObjects 16 }
 
 internetDhcpServerIp OBJECT-TYPE
     SYNTAX      IpAddress
@@ -218,8 +200,77 @@ internetGatewayIp OBJECT-TYPE
     DESCRIPTION "Gateway through which Internet reachability was verified (DHCP-advertised or configured)."
     ::= { scadaSentryObjects 24 }
 
+moduleTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF ModuleEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Modules (CPU and Ethernet) detected on a ControlLogix backplane."
+    ::= { scadaSentryObjects 25 }
+
+moduleEntry OBJECT-TYPE
+    SYNTAX      ModuleEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "A single module entry."
+    INDEX       { moduleIndex }
+    ::= { moduleTable 1 }
+
+ModuleEntry ::= SEQUENCE {
+    moduleIndex            Integer32,
+    moduleSlot             Integer32,
+    moduleType             INTEGER,
+    moduleProductName      DisplayString,
+    moduleFirmware         DisplayString,
+    modulePreviousFirmware DisplayString
+}
+
+moduleIndex OBJECT-TYPE
+    SYNTAX      Integer32 (1..16)
+    MAX-ACCESS  accessible-for-notify
+    STATUS      current
+    DESCRIPTION "Index of the module within the trap (1-based)."
+    ::= { moduleEntry 1 }
+
+moduleSlot OBJECT-TYPE
+    SYNTAX      Integer32 (0..16)
+    MAX-ACCESS  accessible-for-notify
+    STATUS      current
+    DESCRIPTION "Backplane slot of the module (0 = CPU)."
+    ::= { moduleEntry 2 }
+
+moduleType OBJECT-TYPE
+    SYNTAX      INTEGER {
+                    cpu(14),
+                    ethernet(12)
+                }
+    MAX-ACCESS  accessible-for-notify
+    STATUS      current
+    DESCRIPTION "CIP device type of the module (14 = CPU, 12 = Ethernet module)."
+    ::= { moduleEntry 3 }
+
+moduleProductName OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..64))
+    MAX-ACCESS  accessible-for-notify
+    STATUS      current
+    DESCRIPTION "Product name of the module."
+    ::= { moduleEntry 4 }
+
+moduleFirmware OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..32))
+    MAX-ACCESS  accessible-for-notify
+    STATUS      current
+    DESCRIPTION "Firmware revision of the module (e.g. 32.11)."
+    ::= { moduleEntry 5 }
+
+modulePreviousFirmware OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..32))
+    MAX-ACCESS  accessible-for-notify
+    STATUS      current
+    DESCRIPTION "Previous firmware revision of the module before a change was detected."
+    ::= { moduleEntry 6 }
+
 -- Reserved object OIDs for future functionality:
---   scadaSentryObjects 17-18 = reserved
+--   scadaSentryObjects 14, 16, 17-18 = reserved
 
 --
 -- Notifications (traps)
@@ -269,9 +320,12 @@ deviceOnlineTrap NOTIFICATION-TYPE
 newDeviceDiscoveredTrap NOTIFICATION-TYPE
     OBJECTS     { honeypotEventTime, deviceIpAddress, deviceMacAddress,
                   deviceVendor, deviceProductName, deviceFirmwareVersion,
-                  deviceSerial, deviceState, deviceMode }
+                  deviceSerial, deviceState, deviceMode,
+                  moduleSlot, moduleType, moduleProductName, moduleFirmware }
     STATUS      current
-    DESCRIPTION "A new device was discovered on the LAN."
+    DESCRIPTION "A new device was discovered on the LAN. For PLCs, the module
+                 columns repeat once per detected CPU/Ethernet module (indexed
+                 by moduleIndex)."
     ::= { scadaSentryNotifications 8 }
 
 deviceDisappearedTrap NOTIFICATION-TYPE
@@ -289,10 +343,11 @@ deviceModeChangedTrap NOTIFICATION-TYPE
 
 deviceFirmwareChangedTrap NOTIFICATION-TYPE
     OBJECTS     { honeypotEventTime, deviceIpAddress, deviceMacAddress,
-                  devicePreviousFirmwareVersion, deviceFirmwareVersion,
-                  deviceFirmwareVulnerable }
+                  moduleSlot, moduleType, moduleProductName,
+                  modulePreviousFirmware, moduleFirmware }
     STATUS      current
-    DESCRIPTION "The firmware revision of a ControlLogix device changed."
+    DESCRIPTION "The firmware revision of a CPU or Ethernet module on a
+                 ControlLogix backplane changed."
     ::= { scadaSentryNotifications 11 }
 
 internetDetectedTrap NOTIFICATION-TYPE

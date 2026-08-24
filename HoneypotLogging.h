@@ -89,6 +89,10 @@ struct DeviceModuleEmailInfo {
 // Log queue configuration
 #define LOG_QUEUE_SIZE 16
 
+// Maximum number of CPU/Ethernet modules reported per PLC in SNMP traps
+// (must match MAX_MODULES_PER_PLC in LanScanner.h).
+#define MAX_TRAP_MODULES 6
+
 // Class for managing honeypot logging functionality
 class HoneypotLogging {
 private:
@@ -157,6 +161,11 @@ private:
   bool shouldLogEvent(uint32_t ip, ProtocolType protocol);
   bool sendSMTPEmail(const char* subject, const char* body, bool isHtml = false);
   void sendTrap(const uint32_t* trapOid, size_t trapOidLen, const SnmpVarbind* varbinds, size_t varbindCount);
+  // Emit the unified deviceFirmwareChangedTrap for a single module (CPU or Ethernet).
+  void sendModuleFirmwareChangeTrap(IPAddress deviceIp, const uint8_t mac[6],
+                                    uint8_t slot, uint16_t deviceType,
+                                    const char* productName,
+                                    const char* prevFirmware, const char* firmware);
   
 public:
   // Constructor
@@ -205,7 +214,7 @@ public:
   void sendDeviceFirmwareChangeTrap(IPAddress deviceIp, const uint8_t mac[6],
                                     const char* productName,
                                     const char* prevFirmware, const char* firmware,
-                                    int32_t vulnerable, const char* tenableUrl);
+                                    const char* tenableUrl);
   void sendEthernetModuleFirmwareChangeTrap(IPAddress deviceIp, const uint8_t mac[6],
                                             uint8_t slot, const char* productName,
                                             const char* prevFirmware, const char* firmware,

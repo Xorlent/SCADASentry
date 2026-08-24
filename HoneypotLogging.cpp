@@ -28,9 +28,7 @@ static const uint32_t OID_DEVICE_FIRMWARE[]         = {1,3,6,1,4,1,99999,1,10,0}
 static const uint32_t OID_DEVICE_SERIAL[]           = {1,3,6,1,4,1,99999,1,11,0};
 static const uint32_t OID_DEVICE_STATE[]            = {1,3,6,1,4,1,99999,1,12,0};
 static const uint32_t OID_DEVICE_MODE[]             = {1,3,6,1,4,1,99999,1,13,0};
-static const uint32_t OID_DEVICE_PREV_FIRMWARE[]    = {1,3,6,1,4,1,99999,1,14,0};
 static const uint32_t OID_DEVICE_PREV_MODE[]        = {1,3,6,1,4,1,99999,1,15,0};
-static const uint32_t OID_DEVICE_FIRMWARE_VULN[]    = {1,3,6,1,4,1,99999,1,16,0};
 
 // Internet detection object OIDs
 static const uint32_t OID_INTERNET_DHCP_SERVER[]        = {1,3,6,1,4,1,99999,1,21,0};
@@ -52,6 +50,14 @@ static const uint32_t OID_TRAP_DEVICE_MODE_CHANGE[] = {1,3,6,1,4,1,99999,0,10};
 static const uint32_t OID_TRAP_DEVICE_FW_CHANGE[]   = {1,3,6,1,4,1,99999,0,11};
 static const uint32_t OID_TRAP_INTERNET_DETECTED[]       = {1,3,6,1,4,1,99999,0,12};
 static const uint32_t OID_TRAP_ROGUE_DHCP[]              = {1,3,6,1,4,1,99999,0,13};
+
+// Module table column OIDs (scadaSentryObjects 25.1.x). The 1-based moduleIndex
+// is appended as the final subidentifier at send time.
+static const uint32_t OID_MODULE_SLOT[]          = {1,3,6,1,4,1,99999,1,25,1,2};
+static const uint32_t OID_MODULE_TYPE[]          = {1,3,6,1,4,1,99999,1,25,1,3};
+static const uint32_t OID_MODULE_PRODUCT_NAME[]  = {1,3,6,1,4,1,99999,1,25,1,4};
+static const uint32_t OID_MODULE_FIRMWARE[]      = {1,3,6,1,4,1,99999,1,25,1,5};
+static const uint32_t OID_MODULE_PREV_FIRMWARE[] = {1,3,6,1,4,1,99999,1,25,1,6};
 
 // Human-readable name for an event type
 static const char* eventTypeName(EventType t) {
@@ -961,7 +967,7 @@ void HoneypotLogging::sendNewDeviceTrap(IPAddress deviceIp, const uint8_t mac[6]
 
   uint8_t ipBytes[4] = { deviceIp[0], deviceIp[1], deviceIp[2], deviceIp[3] };
 
-  SnmpVarbind varbinds[9];
+  SnmpVarbind varbinds[9 + 4 * MAX_TRAP_MODULES];
   size_t vbCount = 0;
 
   // honeypotEventTime
@@ -1028,6 +1034,56 @@ void HoneypotLogging::sendNewDeviceTrap(IPAddress deviceIp, const uint8_t mac[6]
     varbinds[vbCount].type = SNMP_INTEGER;
     varbinds[vbCount].intValue = mode;
     vbCount++;
+
+    // Per-module varbinds (moduleSlot, moduleType, moduleProductName, moduleFirmware).
+    uint32_t moduleSlotOid[MAX_TRAP_MODULES][12];
+    uint32_t moduleTypeOid[MAX_TRAP_MODULES][12];
+    uint32_t moduleProductOid[MAX_TRAP_MODULES][12];
+    uint32_t moduleFirmwareOid[MAX_TRAP_MODULES][12];
+    char moduleFwStr[MAX_TRAP_MODULES][16];
+
+    for (uint8_t i = 0; i < moduleCount && i < MAX_TRAP_MODULES; i++) {
+      const DeviceModuleEmailInfo& m = modules[i];
+      uint32_t idx = (uint32_t)(i + 1);  // 1-based moduleIndex
+
+      memcpy(moduleSlotOid[i], OID_MODULE_SLOT, sizeof(OID_MODULE_SLOT));
+      moduleSlotOid[i][11] = idx;
+      memcpy(moduleTypeOid[i], OID_MODULE_TYPE, sizeof(OID_MODULE_TYPE));
+      moduleTypeOid[i][11] = idx;
+      memcpy(moduleProductOid[i], OID_MODULE_PRODUCT_NAME, sizeof(OID_MODULE_PRODUCT_NAME));
+      moduleProductOid[i][11] = idx;
+      memcpy(moduleFirmwareOid[i], OID_MODULE_FIRMWARE, sizeof(OID_MODULE_FIRMWARE));
+      moduleFirmwareOid[i][11] = idx;
+
+      snprintf(moduleFwStr[i], sizeof(moduleFwStr[i]), "%u.%u",
+               (unsigned)m.majorRevision, (unsigned)m.minorRevision);
+
+      varbinds[vbCount].oid = moduleSlotOid[i];
+      varbinds[vbCount].oidLen = 12;
+      varbinds[vbCount].type = SNMP_INTEGER;
+      varbinds[vbCount].intValue = m.slot;
+      vbCount++;
+
+      varbinds[vbCount].oid = moduleTypeOid[i];
+      varbinds[vbCount].oidLen = 12;
+      varbinds[vbCount].type = SNMP_INTEGER;
+      varbinds[vbCount].intValue = m.deviceType;
+      vbCount++;
+
+      varbinds[vbCount].oid = moduleProductOid[i];
+      varbinds[vbCount].oidLen = 12;
+      varbinds[vbCount].type = SNMP_OCTET_STRING;
+      varbinds[vbCount].bytes = (const uint8_t*)m.productName;
+      varbinds[vbCount].byteLen = strlen(m.productName);
+      vbCount++;
+
+      varbinds[vbCount].oid = moduleFirmwareOid[i];
+      varbinds[vbCount].oidLen = 12;
+      varbinds[vbCount].type = SNMP_OCTET_STRING;
+      varbinds[vbCount].bytes = (const uint8_t*)moduleFwStr[i];
+      varbinds[vbCount].byteLen = strlen(moduleFwStr[i]);
+      vbCount++;
+    }
   }
 
   if (debugMode) {
@@ -1197,7 +1253,7 @@ void HoneypotLogging::sendDeviceModeChangeTrap(IPAddress deviceIp, const uint8_t
 void HoneypotLogging::sendDeviceFirmwareChangeTrap(IPAddress deviceIp, const uint8_t mac[6],
                                                    const char* productName,
                                                    const char* prevFirmware, const char* firmware,
-                                                   int32_t vulnerable, const char* tenableUrl) {
+                                                   const char* tenableUrl) {
   char eventTimeStr[32];
   const char* timeStr = ntpClient->formattedTime("%Y-%m-%dT%H:%M:%SZ");
   strncpy(eventTimeStr, timeStr, sizeof(eventTimeStr) - 1);
@@ -1242,9 +1298,39 @@ void HoneypotLogging::sendDeviceFirmwareChangeTrap(IPAddress deviceIp, const uin
     return;
   }
 
+  // SNMP mode: send the unified deviceFirmwareChangedTrap for the CPU (slot 0)
+  sendModuleFirmwareChangeTrap(deviceIp, mac, 0, 0x0E, productName, prevFirmware, firmware);
+}
+
+// Emit the unified deviceFirmwareChangedTrap for a single module (CPU or Ethernet).
+void HoneypotLogging::sendModuleFirmwareChangeTrap(IPAddress deviceIp, const uint8_t mac[6],
+                                                   uint8_t slot, uint16_t deviceType,
+                                                   const char* productName,
+                                                   const char* prevFirmware, const char* firmware) {
+  char eventTimeStr[32];
+  const char* timeStr = ntpClient->formattedTime("%Y-%m-%dT%H:%M:%SZ");
+  strncpy(eventTimeStr, timeStr, sizeof(eventTimeStr) - 1);
+  eventTimeStr[sizeof(eventTimeStr) - 1] = '\0';
+
   uint8_t ipBytes[4] = { deviceIp[0], deviceIp[1], deviceIp[2], deviceIp[3] };
 
-  SnmpVarbind varbinds[6];
+  uint32_t moduleSlotOid[12];
+  uint32_t moduleTypeOid[12];
+  uint32_t moduleProductOid[12];
+  uint32_t modulePrevFwOid[12];
+  uint32_t moduleFwOid[12];
+  memcpy(moduleSlotOid, OID_MODULE_SLOT, sizeof(OID_MODULE_SLOT));
+  moduleSlotOid[11] = 1;
+  memcpy(moduleTypeOid, OID_MODULE_TYPE, sizeof(OID_MODULE_TYPE));
+  moduleTypeOid[11] = 1;
+  memcpy(moduleProductOid, OID_MODULE_PRODUCT_NAME, sizeof(OID_MODULE_PRODUCT_NAME));
+  moduleProductOid[11] = 1;
+  memcpy(modulePrevFwOid, OID_MODULE_PREV_FIRMWARE, sizeof(OID_MODULE_PREV_FIRMWARE));
+  modulePrevFwOid[11] = 1;
+  memcpy(moduleFwOid, OID_MODULE_FIRMWARE, sizeof(OID_MODULE_FIRMWARE));
+  moduleFwOid[11] = 1;
+
+  SnmpVarbind varbinds[8];
   size_t vbCount = 0;
 
   varbinds[vbCount].oid = OID_HONEYPOT_EVENT_TIME;
@@ -1268,24 +1354,37 @@ void HoneypotLogging::sendDeviceFirmwareChangeTrap(IPAddress deviceIp, const uin
   varbinds[vbCount].byteLen = 6;
   vbCount++;
 
-  varbinds[vbCount].oid = OID_DEVICE_PREV_FIRMWARE;
-  varbinds[vbCount].oidLen = sizeof(OID_DEVICE_PREV_FIRMWARE) / sizeof(uint32_t);
+  varbinds[vbCount].oid = moduleSlotOid;
+  varbinds[vbCount].oidLen = 12;
+  varbinds[vbCount].type = SNMP_INTEGER;
+  varbinds[vbCount].intValue = slot;
+  vbCount++;
+
+  varbinds[vbCount].oid = moduleTypeOid;
+  varbinds[vbCount].oidLen = 12;
+  varbinds[vbCount].type = SNMP_INTEGER;
+  varbinds[vbCount].intValue = deviceType;
+  vbCount++;
+
+  varbinds[vbCount].oid = moduleProductOid;
+  varbinds[vbCount].oidLen = 12;
+  varbinds[vbCount].type = SNMP_OCTET_STRING;
+  varbinds[vbCount].bytes = (const uint8_t*)productName;
+  varbinds[vbCount].byteLen = strlen(productName);
+  vbCount++;
+
+  varbinds[vbCount].oid = modulePrevFwOid;
+  varbinds[vbCount].oidLen = 12;
   varbinds[vbCount].type = SNMP_OCTET_STRING;
   varbinds[vbCount].bytes = (const uint8_t*)prevFirmware;
   varbinds[vbCount].byteLen = strlen(prevFirmware);
   vbCount++;
 
-  varbinds[vbCount].oid = OID_DEVICE_FIRMWARE;
-  varbinds[vbCount].oidLen = sizeof(OID_DEVICE_FIRMWARE) / sizeof(uint32_t);
+  varbinds[vbCount].oid = moduleFwOid;
+  varbinds[vbCount].oidLen = 12;
   varbinds[vbCount].type = SNMP_OCTET_STRING;
   varbinds[vbCount].bytes = (const uint8_t*)firmware;
   varbinds[vbCount].byteLen = strlen(firmware);
-  vbCount++;
-
-  varbinds[vbCount].oid = OID_DEVICE_FIRMWARE_VULN;
-  varbinds[vbCount].oidLen = sizeof(OID_DEVICE_FIRMWARE_VULN) / sizeof(uint32_t);
-  varbinds[vbCount].type = SNMP_INTEGER;
-  varbinds[vbCount].intValue = vulnerable;
   vbCount++;
 
   if (debugMode) {
@@ -1295,58 +1394,60 @@ void HoneypotLogging::sendDeviceFirmwareChangeTrap(IPAddress deviceIp, const uin
   sendTrap(OID_TRAP_DEVICE_FW_CHANGE, sizeof(OID_TRAP_DEVICE_FW_CHANGE) / sizeof(uint32_t), varbinds, vbCount);
 }
 
-// Send an email notification when a PLC Ethernet module's firmware changes.
-// There is no dedicated SNMP trap OID for Ethernet module firmware changes, so
-// this only produces an SMTP email (the caller logs the change to serial).
+// Send a notification when a PLC Ethernet module's firmware changes.
+// SMTP mode sends an HTML email; SNMP mode sends deviceFirmwareChangedTrap.
 void HoneypotLogging::sendEthernetModuleFirmwareChangeTrap(IPAddress deviceIp, const uint8_t mac[6],
                                                            uint8_t slot, const char* productName,
                                                            const char* prevFirmware, const char* firmware,
                                                            const char* tenableUrl) {
-  if (!useSMTP) {
-    return;
-  }
-
   char eventTimeStr[32];
   const char* timeStr = ntpClient->formattedTime("%Y-%m-%dT%H:%M:%SZ");
   strncpy(eventTimeStr, timeStr, sizeof(eventTimeStr) - 1);
   eventTimeStr[sizeof(eventTimeStr) - 1] = '\0';
 
-  char subject[128];
-  snprintf(subject, sizeof(subject), "[%s Notice] PLC Ethernet module firmware changed", (const char*)hostname);
+  // SMTP mode: send HTML email notification
+  if (useSMTP) {
+    char subject[128];
+    snprintf(subject, sizeof(subject), "[%s Notice] PLC Ethernet module firmware changed", (const char*)hostname);
 
-  char macStr[18];
-  snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
-           (unsigned)mac[0], (unsigned)mac[1], (unsigned)mac[2],
-           (unsigned)mac[3], (unsigned)mac[4], (unsigned)mac[5]);
+    char macStr[18];
+    snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+             (unsigned)mac[0], (unsigned)mac[1], (unsigned)mac[2],
+             (unsigned)mac[3], (unsigned)mac[4], (unsigned)mac[5]);
 
-  char body[640];
-  snprintf(body, sizeof(body),
-           "<html><body>"
-           "<h3>PLC Ethernet module firmware changed</h3>"
-           "<table>"
-           "<tr><td><b>Honeypot:</b></td><td>%s (%d.%d.%d.%d)</td></tr>"
-           "<tr><td><b>Timestamp:</b></td><td>%s UTC</td></tr>"
-           "<tr><td><b>Device IP:</b></td><td>%d.%d.%d.%d</td></tr>"
-           "<tr><td><b>MAC:</b></td><td>%s</td></tr>"
-           "<tr><td><b>Slot:</b></td><td>%u</td></tr>"
-           "<tr><td><b>Module:</b></td><td>%s</td></tr>"
-           "<tr><td><b>Firmware:</b></td><td>%s -&gt; %s</td></tr>"
-           "</table>"
-           "<p><a href=\"%s\">Tenable CVE search</a></p>"
-           "</body></html>",
-           (const char*)hostname, honeypotIP[0], honeypotIP[1], honeypotIP[2], honeypotIP[3],
-           eventTimeStr,
-           deviceIp[0], deviceIp[1], deviceIp[2], deviceIp[3],
-           macStr,
-           (unsigned)slot,
-           productName,
-           prevFirmware, firmware,
-           tenableUrl);
+    char body[640];
+    snprintf(body, sizeof(body),
+             "<html><body>"
+             "<h3>PLC Ethernet module firmware changed</h3>"
+             "<table>"
+             "<tr><td><b>Honeypot:</b></td><td>%s (%d.%d.%d.%d)</td></tr>"
+             "<tr><td><b>Timestamp:</b></td><td>%s UTC</td></tr>"
+             "<tr><td><b>Device IP:</b></td><td>%d.%d.%d.%d</td></tr>"
+             "<tr><td><b>MAC:</b></td><td>%s</td></tr>"
+             "<tr><td><b>Slot:</b></td><td>%u</td></tr>"
+             "<tr><td><b>Module:</b></td><td>%s</td></tr>"
+             "<tr><td><b>Firmware:</b></td><td>%s -&gt; %s</td></tr>"
+             "</table>"
+             "<p><a href=\"%s\">Tenable CVE search</a></p>"
+             "</body></html>",
+             (const char*)hostname, honeypotIP[0], honeypotIP[1], honeypotIP[2], honeypotIP[3],
+             eventTimeStr,
+             deviceIp[0], deviceIp[1], deviceIp[2], deviceIp[3],
+             macStr,
+             (unsigned)slot,
+             productName,
+             prevFirmware, firmware,
+             tenableUrl);
 
-  if (debugMode) {
-    safePrintln("[DEBUG] Queueing Ethernet module firmware change email...");
+    if (debugMode) {
+      safePrintln("[DEBUG] Queueing Ethernet module firmware change email...");
+    }
+    queueEmail(subject, body, true);
+    return;
   }
-  queueEmail(subject, body, true);
+
+  // SNMP mode: send the unified deviceFirmwareChangedTrap for the Ethernet module
+  sendModuleFirmwareChangeTrap(deviceIp, mac, slot, 0x0C, productName, prevFirmware, firmware);
 }
 
 // Send an internetDetectedTrap when Internet access is detected.
