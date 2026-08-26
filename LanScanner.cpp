@@ -60,7 +60,7 @@ static const char* ADVISORY_URL_FALLBACK = "https://www.rockwellautomation.com/e
 
 // Extract the Advisory search term from a ControlLogix device type and product
 // name. CPU (0x0E): a space-delimited string of numbers (e.g. "5561"), or the
-// letter+number catalog designator after "1756-" (e.g. "L55") for older CPUs.
+// "L" + number catalog designator (e.g. "L55", "L340") for CPUs without one.
 // Ethernet module (0x0C): the three characters after '-' (e.g. "ENB").
 // Returns an empty string when no term can be extracted. The result is capped
 // at 7 characters to fit the 8-byte searchTerm buffer.
@@ -86,13 +86,14 @@ static String advisorySearchTerm(uint16_t deviceType, const String& productName)
       start = end;
     }
 
-    // Older CPUs carry no standalone numeric token; their product name begins
-    // with the "1756-Lxx" catalog number, e.g. "1756-L55/A 1756-M12/A LOGIX5555".
-    // Fall back to the letter + digit designator that follows "1756-" ("L55").
+    // Some Logix CPUs carry no standalone numeric token; their product name
+    // begins with the "NNNN-Lxx" catalog number across platform families (1756,
+    // 1768, 1769, 5069), e.g. "1756-L55/A ..." or "5069-L340ERM/A ...".
+    // Fall back to the letter + digit designator after "-L" (e.g. "L55", "L340").
     if (searchResult.length() == 0) {
-      int p = productName.indexOf("1756-");
+      int p = productName.indexOf("-L");
       if (p >= 0) {
-        p += 5;  // skip "1756-"
+        p += 1;  // skip '-', start at 'L'
         int q = p;
         while (q < len &&
                ((productName[q] >= 'A' && productName[q] <= 'Z') ||
