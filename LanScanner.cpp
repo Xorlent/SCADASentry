@@ -53,17 +53,18 @@ static const ClxDiscoveryResult* findDiscovered(const std::vector<ClxDiscoveryRe
   return nullptr;
 }
 
-// Tenable CVE search URL components (constant prefix/suffix).
-static const char* TENABLE_URL_PREFIX   = "https://www.tenable.com/cve/search?q=controllogix+AND+";
-static const char* TENABLE_URL_SUFFIX   = "&sort=newest";
-static const char* TENABLE_URL_FALLBACK = "https://www.tenable.com/cve/search?q=controllogix&sort=newest";
+// Advisory CVE search URL components (constant prefix/suffix).
+static const char* ADVISORY_URL_PREFIX   = "https://www.rockwellautomation.com/en-us/trust-center/security-advisories.html?sort=pubAsc&ra-advisories-search-input=";
+static const char* ADVISORY_URL_SUFFIX   = "&cvss-score=critical-9-0-10-0&cvss-score=high-7-0-8-9";
+static const char* ADVISORY_URL_FALLBACK = "https://www.rockwellautomation.com/en-us/trust-center/security-advisories.html?sort=pubAsc&cvss-score=critical-9-0-10-0&cvss-score=high-7-0-8-9";
 
-// Extract the Tenable search term from a ControlLogix device type and product
-// name. CPU (0x0E): the space-delimited string of numbers (e.g. "5561").
+// Extract the Advisory search term from a ControlLogix device type and product
+// name. CPU (0x0E): a space-delimited string of numbers (e.g. "5561"), or the
+// letter+number catalog designator after "1756-" (e.g. "L55") for older CPUs.
 // Ethernet module (0x0C): the three characters after '-' (e.g. "ENB").
 // Returns an empty string when no term can be extracted. The result is capped
 // at 7 characters to fit the 8-byte searchTerm buffer.
-static String tenableSearchTerm(uint16_t deviceType, const String& productName) {
+static String advisorySearchTerm(uint16_t deviceType, const String& productName) {
   String searchResult;
 
   if (deviceType == 0x0E) {
@@ -84,6 +85,25 @@ static String tenableSearchTerm(uint16_t deviceType, const String& productName) 
       if (allDigits) { searchResult = token; break; }
       start = end;
     }
+
+    // Older CPUs carry no standalone numeric token; their product name begins
+    // with the "1756-Lxx" catalog number, e.g. "1756-L55/A 1756-M12/A LOGIX5555".
+    // Fall back to the letter + digit designator that follows "1756-" ("L55").
+    if (searchResult.length() == 0) {
+      int p = productName.indexOf("1756-");
+      if (p >= 0) {
+        p += 5;  // skip "1756-"
+        int q = p;
+        while (q < len &&
+               ((productName[q] >= 'A' && productName[q] <= 'Z') ||
+                (productName[q] >= 'a' && productName[q] <= 'z'))) q++;
+        int digitStart = q;
+        while (q < len && productName[q] >= '0' && productName[q] <= '9') q++;
+        if (digitStart > p && q > digitStart) {
+          searchResult = productName.substring(p, q);
+        }
+      }
+    }
   } else if (deviceType == 0x0C) {
     // Ethernet module: remove spaces, then take the three characters after '-'.
     // e.g. "1756-ENBT/A ..." -> "ENB"
@@ -102,16 +122,16 @@ static String tenableSearchTerm(uint16_t deviceType, const String& productName) 
   return searchResult;
 }
 
-// Build the full Tenable CVE search URL from a search term.
-static String tenableURL(const String& searchTerm) {
+// Build the full Advisory CVE search URL from a search term.
+static String advisoryURL(const String& searchTerm) {
   if (searchTerm.length() == 0) {
-    return String(TENABLE_URL_FALLBACK);
+    return String(ADVISORY_URL_FALLBACK);
   }
-  return String(TENABLE_URL_PREFIX) + searchTerm + String(TENABLE_URL_SUFFIX);
+  return String(ADVISORY_URL_PREFIX) + searchTerm + String(ADVISORY_URL_SUFFIX);
 }
 
 // Build the per-module list (CPU + Ethernet modules) for a PLC from getPlcInfo
-// results, computing each module's Tenable search term. Returns the number of
+// results, computing each module's Advisory search term. Returns the number of
 // modules stored (capped at MAX_MODULES_PER_PLC).
 static uint8_t buildModules(DeviceModule* out, const ClxPlcInfo& info) {
   uint8_t count = 0;
@@ -125,7 +145,7 @@ static uint8_t buildModules(DeviceModule* out, const ClxPlcInfo& info) {
     dm.minorRevision = m.minorRevision;
     strncpy(dm.productName, m.productName.c_str(), sizeof(dm.productName) - 1);
     dm.productName[sizeof(dm.productName) - 1] = '\0';
-    String term = tenableSearchTerm(m.deviceType, m.productName);
+    String term = advisorySearchTerm(m.deviceType, m.productName);
     strncpy(dm.searchTerm, term.c_str(), sizeof(dm.searchTerm) - 1);
     dm.searchTerm[sizeof(dm.searchTerm) - 1] = '\0';
     count++;
@@ -133,10 +153,10 @@ static uint8_t buildModules(DeviceModule* out, const ClxPlcInfo& info) {
   return count;
 }
 
-// Build the per-module email info (firmware + Tenable URL) for a PLC's
+// Build the per-module email info (firmware + Advisory URL) for a PLC's
 // new-device email. Fills `out` (up to MAX_MODULES_PER_PLC entries) and the
 // `urlBuf` scratch buffers, returning the number of modules populated.
-static uint8_t buildModuleEmailInfo(DeviceModuleEmailInfo* out, char urlBuf[][160],
+static uint8_t buildModuleEmailInfo(DeviceModuleEmailInfo* out, char urlBuf[][224],
                                     const DeviceEntry& dev) {
   uint8_t count = 0;
   for (uint8_t i = 0; i < dev.moduleCount && i < MAX_MODULES_PER_PLC; i++) {
@@ -145,20 +165,22 @@ static uint8_t buildModuleEmailInfo(DeviceModuleEmailInfo* out, char urlBuf[][16
     out[i].productName = dev.modules[i].productName;
     out[i].majorRevision = dev.modules[i].majorRevision;
     out[i].minorRevision = dev.modules[i].minorRevision;
-    String url = tenableURL(String(dev.modules[i].searchTerm));
-    strncpy(urlBuf[i], url.c_str(), 159);
-    urlBuf[i][159] = '\0';
-    out[i].tenableUrl = urlBuf[i];
+    String url = advisoryURL(String(dev.modules[i].searchTerm));
+    strncpy(urlBuf[i], url.c_str(), 223);
+    urlBuf[i][223] = '\0';
+    out[i].advisoryUrl = urlBuf[i];
     count++;
   }
   return count;
 }
 
 // Highest backplane slot (1..16) where a module was detected; 0 if none.
+// Ignores slot 0 (CPU) and the directly-connected-bridge sentinel (0xFF).
 static uint8_t highestModuleSlot(const ClxPlcInfo& info) {
   uint8_t hi = 0;
   for (size_t i = 0; i < info.modules.size(); i++) {
-    if (info.modules[i].slot > hi) hi = info.modules[i].slot;
+    uint8_t s = info.modules[i].slot;
+    if (s >= 1 && s <= MAX_SLOT && s > hi) hi = s;
   }
   return hi;
 }
@@ -181,16 +203,24 @@ static bool modulesEqual(const DeviceModule* a, uint8_t na,
 }
 
 // Print each detected module (debug): slot, type (CPU/Ethernet), name, firmware
-// revision, and Tenable URL.
+// revision, and Advisory URL.
 static void printModuleUrls(HoneypotLogging* logger, const ClxPlcInfo& info) {
   for (size_t i = 0; i < info.modules.size(); i++) {
     const ClxModule& m = info.modules[i];
     const char* typeStr = (m.deviceType == 0x0E) ? "CPU" : "Ethernet";
-    String url = tenableURL(tenableSearchTerm(m.deviceType, m.productName));
+    String url = advisoryURL(advisorySearchTerm(m.deviceType, m.productName));
     char buf[256];
-    snprintf(buf, sizeof(buf), "[DEBUG] Slot %u (%s): %s fw %u.%u - %s",
-             (unsigned)m.slot, typeStr, m.productName.c_str(),
-             (unsigned)m.majorRevision, (unsigned)m.minorRevision, url.c_str());
+    // 0xFF is the sentinel for the directly-connected Ethernet bridge, whose
+    // backplane slot is not exposed (see SLOT_DIRECT_BRIDGE).
+    if (m.slot == 0xFF) {
+      snprintf(buf, sizeof(buf), "[DEBUG] Ethernet bridge (directly connected): %s fw %u.%u - %s",
+               m.productName.c_str(),
+               (unsigned)m.majorRevision, (unsigned)m.minorRevision, url.c_str());
+    } else {
+      snprintf(buf, sizeof(buf), "[DEBUG] Slot %u (%s): %s fw %u.%u - %s",
+               (unsigned)m.slot, typeStr, m.productName.c_str(),
+               (unsigned)m.majorRevision, (unsigned)m.minorRevision, url.c_str());
+    }
     logger->safePrintln(buf);
   }
 }
@@ -289,9 +319,9 @@ void LanScanner::runScan() {
           dev.hasStatus = true;
           dev.lastStatusCheck = esp_timer_get_time();
 
-          // Build per-module info (firmware + Tenable URL) for the new-device email.
+          // Build per-module info (firmware + Advisory URL) for the new-device email.
           DeviceModuleEmailInfo moduleInfos[MAX_MODULES_PER_PLC];
-          char moduleUrlBuf[MAX_MODULES_PER_PLC][160];
+          char moduleUrlBuf[MAX_MODULES_PER_PLC][224];
           uint8_t moduleInfoCount = buildModuleEmailInfo(moduleInfos, moduleUrlBuf, dev);
 
           logger->sendNewDeviceTrap(ip, dev.mac, true, dev.vendor, dev.productName,
@@ -337,7 +367,7 @@ void LanScanner::runScan() {
             devices[idx].lastStatusCheck = esp_timer_get_time();
 
             DeviceModuleEmailInfo moduleInfos[MAX_MODULES_PER_PLC];
-            char moduleUrlBuf[MAX_MODULES_PER_PLC][160];
+            char moduleUrlBuf[MAX_MODULES_PER_PLC][224];
             uint8_t moduleInfoCount = buildModuleEmailInfo(moduleInfos, moduleUrlBuf, devices[idx]);
 
             logger->sendNewDeviceTrap(ip, devices[idx].mac, true, devices[idx].vendor,
@@ -373,7 +403,7 @@ void LanScanner::runScan() {
       dev.lastStatusCheck = esp_timer_get_time();
 
       DeviceModuleEmailInfo moduleInfos[MAX_MODULES_PER_PLC];
-      char moduleUrlBuf[MAX_MODULES_PER_PLC][160];
+      char moduleUrlBuf[MAX_MODULES_PER_PLC][224];
       uint8_t moduleInfoCount = buildModuleEmailInfo(moduleInfos, moduleUrlBuf, dev);
 
       logger->sendNewDeviceTrap(dev.ip, dev.mac, true, dev.vendor, dev.productName,
@@ -487,6 +517,20 @@ void LanScanner::queryPlcMode(DeviceEntry& dev) {
     dev.mode = keyswitchToMode(info.keyswitch);
     dev.moduleCount = buildModules(dev.modules, info);
     dev.highestSlot = highestModuleSlot(info);
+    // Use the CPU's identity (slot 0) as the device's PLC identity rather than
+    // the ListIdentity result, which may belong to the Ethernet bridge (e.g. an
+    // older 1756-ENBT/A answering the discovery instead of the CPU).
+    strncpy(dev.productName, info.productName.c_str(), sizeof(dev.productName) - 1);
+    dev.productName[sizeof(dev.productName) - 1] = '\0';
+    snprintf(dev.firmware, sizeof(dev.firmware), "%u.%u", info.cpuMajorRevision, info.cpuMinorRevision);
+    // Serial and state are also sourced from the CPU read now; keep the
+    // ListIdentity-derived values if the CPU did not report them (0 / 0xFF).
+    if (info.serialNumber != 0) {
+      snprintf(dev.serial, sizeof(dev.serial), "%lu", (unsigned long)info.serialNumber);
+    }
+    if (info.state != 0xFF) {
+      dev.state = info.state;
+    }
     if (DEBUG) {
       char buf[128];
       snprintf(buf, sizeof(buf), "[DEBUG] PLC %d.%d.%d.%d is %s mode and has a backplane populated up to slot %u",
@@ -527,7 +571,7 @@ void LanScanner::checkStatus(DeviceEntry& dev, bool doExpansionCheck) {
     snprintf(buf, sizeof(buf), "PLC firmware change: %d.%d.%d.%d %s -> %s",
              dev.ip[0], dev.ip[1], dev.ip[2], dev.ip[3], dev.firmware, freshFirmware);
     logger->safePrintln(buf);
-    String cpuUrl = tenableURL(tenableSearchTerm(0x0E, info.productName));
+    String cpuUrl = advisoryURL(advisorySearchTerm(0x0E, info.productName));
     logger->sendDeviceFirmwareChangeTrap(dev.ip, dev.mac, dev.productName,
                                          dev.firmware, freshFirmware,
                                          cpuUrl.c_str());
@@ -561,7 +605,7 @@ void LanScanner::checkStatus(DeviceEntry& dev, bool doExpansionCheck) {
     char prevFw[16], newFw[16];
     snprintf(prevFw, sizeof(prevFw), "%u.%u", (unsigned)old->majorRevision, (unsigned)old->minorRevision);
     snprintf(newFw, sizeof(newFw), "%u.%u", (unsigned)m.majorRevision, (unsigned)m.minorRevision);
-    String url = tenableURL(tenableSearchTerm(m.deviceType, m.productName));
+    String url = advisoryURL(advisorySearchTerm(m.deviceType, m.productName));
 
     char buf[128];
     snprintf(buf, sizeof(buf), "PLC Ethernet module (slot %u) firmware change: %s -> %s",

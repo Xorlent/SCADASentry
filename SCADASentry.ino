@@ -42,6 +42,16 @@
 #define TCP_ACK   0x10U
 #endif
 
+// Map an IANA IP protocol number to the holdoff bucket (ProtocolType).
+static ProtocolType protocolTypeFor(uint8_t ianaProtocol) {
+  switch (ianaProtocol) {
+    case IP_PROTO_UDP:  return PROTO_UDP;
+    case IP_PROTO_ICMP: return PROTO_ICMP;
+    case IP_PROTO_TCP:
+    default:            return PROTO_TCP;
+  }
+}
+
 #define ETH_ADDR        1
 #define ETH_POWER_PIN   51
 #define ETH_TYPE        ETH_PHY_TLK110
@@ -291,7 +301,7 @@ static u8_t raw_recv_callback(void *arg, struct raw_pcb *pcb, struct pbuf *p, co
     
     const char* fragDesc = getFragmentDescription(protocol);
     
-    logger.enqueueLogEvent(EVT_FRAGMENT, 0, sourceIPAddr, PROTO_TCP, protocol, fragDesc);
+    logger.enqueueLogEvent(EVT_FRAGMENT, 0, sourceIPAddr, protocolTypeFor(protocol), protocol, fragDesc);
     
     // Drop fragmented packets
     pbuf_free(p);
@@ -307,7 +317,7 @@ static u8_t raw_recv_callback(void *arg, struct raw_pcb *pcb, struct pbuf *p, co
     
     const char* optDesc = getIPOptionsDescription(protocol);
     
-    logger.enqueueLogEvent(EVT_IP_OPTIONS, 0, sourceIPAddr, PROTO_TCP, protocol, optDesc);
+    logger.enqueueLogEvent(EVT_IP_OPTIONS, 0, sourceIPAddr, protocolTypeFor(protocol), protocol, optDesc);
     
     // Drop packets with IP options
     pbuf_free(p);
@@ -561,7 +571,7 @@ void setup() {
 
   // Initialize and start the LAN scanner
   scanner.begin();
-  xTaskCreate(scannerTask, "lanScanner", 8192, NULL, 1, &scannerTaskHandle);
+  xTaskCreate(scannerTask, "lanScanner", 12288, NULL, 1, &scannerTaskHandle);
 
   // Initialize and start Internet detection
   if (DETECT_INTERNET) {

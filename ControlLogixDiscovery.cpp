@@ -52,6 +52,13 @@ static const uint16_t MAX_RESPONSE_BODY = 512;
 // All-zero encapsulation context (sender context bytes are unused here).
 static const uint8_t ZERO_CONTEXT[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 
+// Placeholder slot reported for a directly-connected Ethernet bridge when its
+// backplane slot cannot be recovered. Older bridges (e.g. the 1756-ENBT/A,
+// firmware 3.6) do not expose their slot in the Identity object and do not
+// honor a backplane route to their own slot, so they are read directly and
+// reported under this sentinel (distinct from slot 0 = CPU).
+static const uint8_t SLOT_DIRECT_BRIDGE = 0xFF;
+
 // ---------------------------------------------------------------------------
 // Little-endian helpers
 // ---------------------------------------------------------------------------
@@ -113,6 +120,20 @@ static void buildGetIdentity(std::vector<uint8_t>& out) {
     out.push_back(0x02);                    // path size = 2 words
     out.push_back(0x20); out.push_back(CLASS_IDENTITY); // class 0x01
     out.push_back(0x24); out.push_back(0x01);           // instance 1
+}
+
+// ---------------------------------------------------------------------------
+// Build the embedded "Get Attribute Single" request for the Identity object
+// (class 0x01, instance 1) attribute `attr`.
+// Result: 0E 03 20 01 24 01 30 <attr>
+// ---------------------------------------------------------------------------
+static void buildGetIdentitySingle(std::vector<uint8_t>& out, uint8_t attr) {
+    out.clear();
+    out.push_back(SVC_GET_ATTR_SINGLE);     // 0x0E
+    out.push_back(0x03);                    // path size = 3 words
+    out.push_back(0x20); out.push_back(CLASS_IDENTITY); // class 0x01
+    out.push_back(0x24); out.push_back(0x01);           // instance 1
+    out.push_back(0x30); out.push_back(attr);           // attribute
 }
 
 // ---------------------------------------------------------------------------
@@ -330,40 +351,152 @@ bool ControlLogixDiscovery::sendRRData(const uint8_t* cipMsg, uint16_t cipLen,
 // ---------------------------------------------------------------------------
 // Read the Identity object of the module in `slot`.
 // ---------------------------------------------------------------------------
+bool ControlLogixDiscovery::readIdentityImpl(bool direct, uint8_t slot,
+                                             String& productName, uint8_t& major,
+                                             uint8_t& minor, uint16_t* statusWord,
+                                             uint16_t* deviceType, uint32_t* serialNumber,
+                                             uint32_t timeoutMs) {
+    // Primary attempt: Get Attributes All (full Identity object). This is the
+    // normal path for CPUs and modern comm modules and is left unchanged.
+    {
+        std::vector<uint8_t> embedded;
+        buildGetIdentity(embedded);
+
+        uint8_t resp[MAX_CIP_RESPONSE];
+        uint16_t respLen = sizeof(resp);
+        bool sent;
+        if (direct) {
+            sent = sendRRData(embedded.data(), embedded.size(), resp, respLen, timeoutMs);
+        } else {
+            std::vector<uint8_t> cip;
+            buildUnconnectedSend(embedded.data(), embedded.size(), slot, cip);
+            sent = sendRRData(cip.data(), cip.size(), resp, respLen, timeoutMs);
+        }
+        if (sent) {
+            // CIP response: service(1) reserved(1) status(1) addl-status-size(1) data...
+            if (respLen >= 5 &&
+                resp[0] == (SVC_GET_ATTR_ALL | CIP_RESPONSE_BIT) &&   // 0x81
+                resp[2] == 0x00) {                                    // general status
+
+                const uint8_t* d = resp + 4;   // skip service, reserved, status, addl size
+                uint16_t avail = respLen - 4;
+                if (avail >= 15) {  // need fixed fields + name length byte
+                    // vendor(2) at d+0 and product code(2) at d+4 are not needed; skip them.
+                    if (deviceType) *deviceType = getU16(d + 2);
+                    major              = d[6];
+                    minor              = d[7];
+                    if (statusWord) *statusWord = getU16(d + 8);
+                    // serial(4) at d+10
+                    if (serialNumber) *serialNumber = getU32(d + 10);
+                    uint8_t nameLen    = d[14];
+                    productName = "";
+                    if (15 + nameLen <= avail) {
+                        productName = String((const char*)(d + 15), nameLen);
+                    }
+                    return true;
+                }
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Fallback for older modules (e.g. the 1756-ENBT/A, firmware 3.6) that do
+    // not honor Get Attributes All. Read the individual Identity attributes
+    // one at a time with Get Attribute Single. The product name (attr 7) and
+    // revision (attr 4) are required; the device type (attr 2) and status word
+    // (attr 5) are best-effort.
+    // -----------------------------------------------------------------------
+    productName = "";
+    major = 0;
+    minor = 0;
+
+    // Send a single-attribute Get and validate the common reply envelope:
+    //   reply service(1) reserved(1) status(2) data...
+    auto getSingle = [&](uint8_t attr, uint8_t* outBuf, uint16_t& outLen) -> bool {
+        std::vector<uint8_t> embedded;
+        buildGetIdentitySingle(embedded, attr);
+
+        outLen = MAX_CIP_RESPONSE;
+        bool ok;
+        if (direct) {
+            ok = sendRRData(embedded.data(), embedded.size(), outBuf, outLen, timeoutMs);
+        } else {
+            std::vector<uint8_t> cip;
+            buildUnconnectedSend(embedded.data(), embedded.size(), slot, cip);
+            ok = sendRRData(cip.data(), cip.size(), outBuf, outLen, timeoutMs);
+        }
+        if (!ok) return false;
+        if (outLen < 5) return false;
+        if (outBuf[0] != (SVC_GET_ATTR_SINGLE | CIP_RESPONSE_BIT)) return false;  // 0x8E
+        if (outBuf[2] != 0x00) return false;                                      // status
+        return true;
+    };
+
+    uint8_t buf[MAX_CIP_RESPONSE];
+    uint16_t bufLen;
+
+    // Attribute 7 (Product Name): SHORT_STRING of len(1) + bytes.
+    bool gotName = false;
+    if (getSingle(0x07, buf, bufLen)) {
+        const uint8_t* d = buf + 4;
+        uint16_t avail = bufLen - 4;
+        if (avail >= 1) {
+            uint8_t nameLen = d[0];
+            if (1 + nameLen <= avail) {
+                productName = String((const char*)(d + 1), nameLen);
+                gotName = true;
+            }
+        }
+    }
+    if (!gotName) return false;
+
+    // Attribute 4 (Revision): major, minor (two USINTs).
+    if (!getSingle(0x04, buf, bufLen)) return false;
+    if (bufLen < 6) return false;
+    major = buf[4];
+    minor = buf[5];
+
+    // Attribute 2 (Device Type): UINT (best-effort).
+    if (deviceType) {
+        *deviceType = 0;
+        if (getSingle(0x02, buf, bufLen) && bufLen >= 6) {
+            *deviceType = getU16(buf + 4);
+        }
+    }
+
+    // Attribute 5 (Status): WORD (best-effort).
+    if (statusWord) {
+        *statusWord = 0;
+        if (getSingle(0x05, buf, bufLen) && bufLen >= 6) {
+            *statusWord = getU16(buf + 4);
+        }
+    }
+
+    // Attribute 6 (Serial Number): UDINT (best-effort).
+    if (serialNumber) {
+        *serialNumber = 0;
+        if (getSingle(0x06, buf, bufLen) && bufLen >= 8) {
+            *serialNumber = getU32(buf + 4);
+        }
+    }
+
+    return true;
+}
+
 bool ControlLogixDiscovery::readIdentity(uint8_t slot, String& productName, uint8_t& major,
                                          uint8_t& minor, uint16_t* statusWord,
-                                         uint16_t* deviceType, uint32_t timeoutMs) {
-    std::vector<uint8_t> embedded;
-    buildGetIdentity(embedded);
+                                         uint16_t* deviceType, uint32_t timeoutMs,
+                                         uint32_t* serialNumber) {
+    return readIdentityImpl(false, slot, productName, major, minor, statusWord, deviceType,
+                            serialNumber, timeoutMs);
+}
 
-    std::vector<uint8_t> cip;
-    buildUnconnectedSend(embedded.data(), embedded.size(), slot, cip);
-
-    uint8_t resp[MAX_CIP_RESPONSE];
-    uint16_t respLen = sizeof(resp);
-    if (!sendRRData(cip.data(), cip.size(), resp, respLen, timeoutMs)) return false;
-
-    // CIP response: service(1) reserved(1) status(1) addl-status-size(1) data...
-    if (respLen < 5) return false;
-    if (resp[0] != (SVC_GET_ATTR_ALL | CIP_RESPONSE_BIT)) return false;   // 0x81
-    if (resp[2] != 0x00) return false;                        // general status
-
-    const uint8_t* d = resp + 4;   // skip service, reserved, status, addl size
-    uint16_t avail = respLen - 4;
-    if (avail < 15) return false;  // need fixed fields + name length byte
-
-    // vendor(2) at d+0 and product code(2) at d+4 are not needed; skip them.
-    if (deviceType) *deviceType = getU16(d + 2);
-    major              = d[6];
-    minor              = d[7];
-    if (statusWord) *statusWord = getU16(d + 8);
-    // serial(4) at d+10
-    uint8_t nameLen    = d[14];
-    productName = "";
-    if (15 + nameLen <= avail) {
-        productName = String((const char*)(d + 15), nameLen);
-    }
-    return true;
+bool ControlLogixDiscovery::readIdentityDirect(String& productName, uint8_t& major,
+                                               uint8_t& minor, uint16_t* statusWord,
+                                               uint16_t* deviceType, uint32_t timeoutMs,
+                                               uint32_t* serialNumber) {
+    return readIdentityImpl(true, 0, productName, major, minor, statusWord, deviceType,
+                            serialNumber, timeoutMs);
 }
 
 // ---------------------------------------------------------------------------
@@ -441,11 +574,13 @@ bool ControlLogixDiscovery::getPlcInfo(const IPAddress& ip, ClxPlcInfo& info,
     uint8_t major = 0, minor = 0;
     uint16_t statusWord = 0;
     uint16_t slot0Type = 0;
-    if (!readIdentity(0, cpuName, major, minor, &statusWord, &slot0Type, timeoutMs)) {
+    uint32_t cpuSerial = 0;
+    if (!readIdentity(0, cpuName, major, minor, &statusWord, &slot0Type, timeoutMs, &cpuSerial)) {
         unregisterSession();
         _client.stop();
         return false;
     }
+    info.serialNumber = cpuSerial;
 
     info.productName       = cpuName;
     info.cpuMajorRevision  = major;
@@ -462,6 +597,25 @@ bool ControlLogixDiscovery::getPlcInfo(const IPAddress& ip, ClxPlcInfo& info,
         info.keyswitch = (s1 == KEYSWITCH_REMOTE_0 || s1 == KEYSWITCH_REMOTE_1) ? "REMOTE PROG" : "PROG";
     } else {
         info.keyswitch = "UNKNOWN";
+    }
+
+    // --- CPU state (Identity attr 8, best-effort) ---
+    // Older CPUs/bridges may not implement the State attribute; if unavailable,
+    // info.state stays 0xFF and the caller keeps its previous value.
+    info.state = 0xFF;
+    {
+        std::vector<uint8_t> embedded;
+        buildGetIdentitySingle(embedded, 0x08);
+        std::vector<uint8_t> cip;
+        buildUnconnectedSend(embedded.data(), embedded.size(), 0, cip);   // slot 0 (CPU)
+        uint8_t resp[MAX_CIP_RESPONSE];
+        uint16_t respLen = sizeof(resp);
+        if (sendRRData(cip.data(), cip.size(), resp, respLen, timeoutMs) &&
+            respLen >= 5 &&
+            resp[0] == (SVC_GET_ATTR_SINGLE | CIP_RESPONSE_BIT) &&
+            resp[2] == 0x00) {
+            info.state = resp[4];   // USINT
+        }
     }
 
     // Add the slot 0 CPU to the module list.
@@ -499,6 +653,47 @@ bool ControlLogixDiscovery::getPlcInfo(const IPAddress& ip, ClxPlcInfo& info,
                 mod.minorRevision = mn;
                 mod.isRun         = (dt == DEVICE_TYPE_PLC) && ((sw & 0xFF) == KEYSWITCH_RUN);
                 info.modules.push_back(mod);
+            }
+        }
+    }
+
+    // --- Directly-connected device (the far end of this TCP session) ---
+    // When the endpoint answers as a Communications Adapter rather than a CPU,
+    // it is an Ethernet bridge (e.g. a 1756-ENBT/A). Its own Identity object is
+    // only reachable via direct addressing (no backplane route), so read it
+    // directly and record it alongside the CPU and any rack modules.
+    {
+        String directName;
+        uint8_t dmaj = 0, dmin = 0;
+        uint16_t ddt = 0;
+        if (readIdentityDirect(directName, dmaj, dmin, nullptr, &ddt, timeoutMs)) {
+            // Treat as a bridge: device type 0x0C, or an unreadable type with a
+            // "-EN" product name (older bridges may not report the type attr).
+            bool isBridge = (ddt == DEVICE_TYPE_COMM_ADAPTER) ||
+                            (ddt == 0 && directName.indexOf("-EN") >= 0);
+            if (isBridge) {
+                // Avoid a duplicate when the backplane scan already reported this
+                // module (some bridges honor a route to their own slot).
+                bool dup = false;
+                for (size_t i = 0; i < info.modules.size(); i++) {
+                    if (info.modules[i].deviceType == DEVICE_TYPE_COMM_ADAPTER &&
+                        info.modules[i].productName == directName &&
+                        info.modules[i].majorRevision == dmaj &&
+                        info.modules[i].minorRevision == dmin) {
+                        dup = true;
+                        break;
+                    }
+                }
+                if (!dup) {
+                    ClxModule bridgeMod;
+                    bridgeMod.slot          = SLOT_DIRECT_BRIDGE;
+                    bridgeMod.deviceType    = (ddt != 0) ? ddt : DEVICE_TYPE_COMM_ADAPTER;
+                    bridgeMod.productName   = directName;
+                    bridgeMod.majorRevision = dmaj;
+                    bridgeMod.minorRevision = dmin;
+                    bridgeMod.isRun         = false;
+                    info.modules.push_back(bridgeMod);
+                }
             }
         }
     }

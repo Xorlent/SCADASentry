@@ -26,7 +26,7 @@
 struct DeviceModule {
   uint8_t  slot;           // 0 = CPU, 1..16 = Ethernet module / secondary CPU
   uint16_t deviceType;     // 0x0E = CPU, 0x0C = Ethernet module
-  char     searchTerm[8];  // extracted Tenable search term (max 7 chars + NUL)
+  char     searchTerm[8];  // extracted Advisory search term (max 7 chars + NUL)
   char     productName[64];// full CIP Identity product name
   bool     isRun;          // run key status (CPU only; false for Ethernet)
   uint8_t  majorRevision;  // firmware major revision

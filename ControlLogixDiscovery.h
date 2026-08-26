@@ -56,6 +56,8 @@ struct ClxPlcInfo {
     bool      isRun;              // true when the keyswitch is in RUN or REMOTE RUN
     uint8_t   cpuMajorRevision;
     uint8_t   cpuMinorRevision;
+    uint32_t  serialNumber;      // CPU serial number (0 = unknown/not read)
+    uint8_t   state;             // CPU state (Identity attr 8); 0xFF = unknown
     std::vector<ClxModule> modules;
 };
 
@@ -83,11 +85,27 @@ private:
     bool registerSession();
     void unregisterSession();
 
-    // Read the Identity object (class 0x01, instance 1) of the module in `slot`.
-    // `statusWord` and `deviceType` are optional; pass nullptr to skip them.
+    // Read the Identity object (class 0x01, instance 1) of the module in `slot`
+    // via a backplane route. `statusWord`, `deviceType` and `serialNumber` are
+    // optional; pass nullptr to skip them.
     bool readIdentity(uint8_t slot, String& productName, uint8_t& major, uint8_t& minor,
                       uint16_t* statusWord = nullptr, uint16_t* deviceType = nullptr,
-                      uint32_t timeoutMs = 2000);
+                      uint32_t timeoutMs = 2000, uint32_t* serialNumber = nullptr);
+
+    // Read the Identity object of the device directly answering this TCP
+    // connection (direct addressing, no backplane route or Connection Manager
+    // wrapper). Used to identify an Ethernet bridge (e.g. 1756-ENBT/A) that owns
+    // the IP we connected to.
+    bool readIdentityDirect(String& productName, uint8_t& major, uint8_t& minor,
+                            uint16_t* statusWord = nullptr, uint16_t* deviceType = nullptr,
+                            uint32_t timeoutMs = 2000, uint32_t* serialNumber = nullptr);
+
+    // Shared implementation of readIdentity()/readIdentityDirect(). When `direct`
+    // is true the request is sent with no route path; otherwise it is routed
+    // through the backplane to `slot`.
+    bool readIdentityImpl(bool direct, uint8_t slot, String& productName, uint8_t& major,
+                          uint8_t& minor, uint16_t* statusWord, uint16_t* deviceType,
+                          uint32_t* serialNumber, uint32_t timeoutMs);
 
     // Read the Host Name (TCP/IP Interface object 0xF5, instance 1, attribute 6).
     bool readHostname(String& hostname, uint32_t timeoutMs);

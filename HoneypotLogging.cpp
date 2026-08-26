@@ -937,12 +937,23 @@ void HoneypotLogging::sendNewDeviceTrap(IPAddress deviceIp, const uint8_t mac[6]
       for (uint8_t i = 0; i < moduleCount; i++) {
         const DeviceModuleEmailInfo& m = modules[i];
         const char* typeStr = (m.deviceType == 0x0E) ? "CPU" : "Ethernet";
-        len += snprintf(body + len, sizeof(body) - len,
-                 "<tr><td>Slot %u (%s)</td><td>%s</td><td>%u.%u</td>"
-                 "<td><a href=\"%s\">CVE search</a></td></tr>",
-                 (unsigned)m.slot, typeStr, m.productName,
-                 (unsigned)m.majorRevision, (unsigned)m.minorRevision,
-                 m.tenableUrl);
+        // 0xFF is the sentinel for the directly-connected Ethernet bridge (see
+        // SLOT_DIRECT_BRIDGE); its backplane slot is not exposed.
+        if (m.slot == 0xFF) {
+          len += snprintf(body + len, sizeof(body) - len,
+                   "<tr><td>Ethernet bridge (direct)</td><td>%s</td><td>%u.%u</td>"
+                   "<td><a href=\"%s\">CVE search</a></td></tr>",
+                   m.productName,
+                   (unsigned)m.majorRevision, (unsigned)m.minorRevision,
+                   m.advisoryUrl);
+        } else {
+          len += snprintf(body + len, sizeof(body) - len,
+                   "<tr><td>Slot %u (%s)</td><td>%s</td><td>%u.%u</td>"
+                   "<td><a href=\"%s\">CVE search</a></td></tr>",
+                   (unsigned)m.slot, typeStr, m.productName,
+                   (unsigned)m.majorRevision, (unsigned)m.minorRevision,
+                   m.advisoryUrl);
+        }
       }
       len += snprintf(body + len, sizeof(body) - len, "</table></body></html>");
     } else {
@@ -1253,7 +1264,7 @@ void HoneypotLogging::sendDeviceModeChangeTrap(IPAddress deviceIp, const uint8_t
 void HoneypotLogging::sendDeviceFirmwareChangeTrap(IPAddress deviceIp, const uint8_t mac[6],
                                                    const char* productName,
                                                    const char* prevFirmware, const char* firmware,
-                                                   const char* tenableUrl) {
+                                                   const char* advisoryUrl) {
   char eventTimeStr[32];
   const char* timeStr = ntpClient->formattedTime("%Y-%m-%dT%H:%M:%SZ");
   strncpy(eventTimeStr, timeStr, sizeof(eventTimeStr) - 1);
@@ -1281,7 +1292,7 @@ void HoneypotLogging::sendDeviceFirmwareChangeTrap(IPAddress deviceIp, const uin
              "<tr><td><b>Product:</b></td><td>%s</td></tr>"
              "<tr><td><b>Firmware:</b></td><td>%s -&gt; %s</td></tr>"
              "</table>"
-             "<p><a href=\"%s\">Tenable CVE search</a></p>"
+             "<p><a href=\"%s\">Advisory CVE search</a></p>"
              "</body></html>",
              (const char*)hostname, honeypotIP[0], honeypotIP[1], honeypotIP[2], honeypotIP[3],
              eventTimeStr,
@@ -1289,7 +1300,7 @@ void HoneypotLogging::sendDeviceFirmwareChangeTrap(IPAddress deviceIp, const uin
              macStr,
              productName,
              prevFirmware, firmware,
-             tenableUrl);
+             advisoryUrl);
 
     if (debugMode) {
       safePrintln("[DEBUG] Queueing device firmware change email...");
@@ -1399,7 +1410,7 @@ void HoneypotLogging::sendModuleFirmwareChangeTrap(IPAddress deviceIp, const uin
 void HoneypotLogging::sendEthernetModuleFirmwareChangeTrap(IPAddress deviceIp, const uint8_t mac[6],
                                                            uint8_t slot, const char* productName,
                                                            const char* prevFirmware, const char* firmware,
-                                                           const char* tenableUrl) {
+                                                           const char* advisoryUrl) {
   char eventTimeStr[32];
   const char* timeStr = ntpClient->formattedTime("%Y-%m-%dT%H:%M:%SZ");
   strncpy(eventTimeStr, timeStr, sizeof(eventTimeStr) - 1);
@@ -1428,7 +1439,7 @@ void HoneypotLogging::sendEthernetModuleFirmwareChangeTrap(IPAddress deviceIp, c
              "<tr><td><b>Module:</b></td><td>%s</td></tr>"
              "<tr><td><b>Firmware:</b></td><td>%s -&gt; %s</td></tr>"
              "</table>"
-             "<p><a href=\"%s\">Tenable CVE search</a></p>"
+             "<p><a href=\"%s\">Advisory CVE search</a></p>"
              "</body></html>",
              (const char*)hostname, honeypotIP[0], honeypotIP[1], honeypotIP[2], honeypotIP[3],
              eventTimeStr,
@@ -1437,7 +1448,7 @@ void HoneypotLogging::sendEthernetModuleFirmwareChangeTrap(IPAddress deviceIp, c
              (unsigned)slot,
              productName,
              prevFirmware, firmware,
-             tenableUrl);
+             advisoryUrl);
 
     if (debugMode) {
       safePrintln("[DEBUG] Queueing Ethernet module firmware change email...");
