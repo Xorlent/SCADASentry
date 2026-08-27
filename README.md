@@ -77,7 +77,7 @@ The device periodically probes the local segment for a DHCP server and verifies 
 
 - It retrieves the DHCP server identifier and the advertised default gateway, then tests Internet reachability through that gateway and/or the configured default gateway (a TCP connection to a public anycast IP on port 443, falling back to a DNS query to a public resolver).
 - When Internet access is detected, it reports `internetDetectedTrap`, including the gateway and any DHCP server found.
-- The DHCP probe sends only a DHCPDISCOVER (never a DHCPREQUEST), so it does not obtain or reserve an IP address - the device always keeps its statically-configured IP.
+- The DHCP probe sends only a DHCPDISCOVER, so it does not obtain or reserve an IP address - the device always keeps its statically-configured IP.
 - If a DHCP server advertises a default gateway outside the device's configured subnet, the device treats it as a rogue DHCP server: it skips testing that gateway and reports `rogueDhcpServerTrap` (including the rogue server IP and the advertised gateway) instead.
 
 ## Firmware Vulnerability Lookup
