@@ -33,7 +33,7 @@ Commercial OT/SCADA vulnerability and monitoring platforms are expensive to lice
 
 SCADASentry takes a different approach. It is a purpose-built, ultra low-cost (~$21.50 in hardware), zero-maintenance device that plugs into a PoE port and quietly watches your PLC LAN. It reports only the events that matter: new or departed devices, run-key and firmware changes, and scanning/reconnaissance activity - All via standard SNMP traps or email.  No servers, specialized network appliances, span ports, agent software, cloud dependency, and no tuning required.
 
-This device was designed specifically for monitoring Allen Bradley ControlLogix PLC network environments.
+This device was designed specifically for monitoring Allen Bradley ControlLogix PLC network environments and is intentionally simple.  If detailed device activity (tag create/delete, program load, etc.) is needed, a commercial OT/SCADA platform is likely the better choice.
 
 ## To-do
 - End-to-end SMTP testing
