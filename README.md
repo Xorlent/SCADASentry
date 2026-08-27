@@ -29,7 +29,7 @@
 - [Technical Information](#technical-information)
 
 ## Background
-Commercial OT/SCADA vulnerability and monitoring platforms are expensive to license, time-consuming to stand up, and finicky to keep running - and once they are running they tend to flood operators with unnecessary alerts that drown out the signal that actually matters. For many plant operations, that overhead can be hard to justify, especially for smaller deployments.
+Commercial OT/SCADA vulnerability and monitoring platforms are expensive to license, time-consuming to stand up, and finicky to keep running - and once they are running they tend to flood operators with unnecessary alerts that drown out the signal that actually matters. For many plant operations, that overhead can be hard to justify, especially for smaller environments.
 
 SCADASentry takes a different approach. It is a purpose-built, ultra low-cost (~$21.50 in hardware), zero-maintenance device that plugs into a PoE port and quietly watches your PLC LAN. It reports only the events that matter: new or departed devices, run-key and firmware changes, and scanning/reconnaissance activity - All via standard SNMP traps or email.  No servers, specialized network appliances, span ports, agent software, cloud dependency, and no tuning required.
 
