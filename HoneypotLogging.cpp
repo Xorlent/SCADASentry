@@ -427,6 +427,11 @@ void HoneypotLogging::processLogQueue(IPAddress localIP, IPAddress subnetMask) {
       if (isBroadcastOrMulticast(sourceIP_u32, localIP, subnetMask)) {
         continue; // Skip without logging
       }
+
+      // Silently ignore hosts listed in Config.h excludedHosts[]
+      if (isExcludedHost(sourceIP_u32)) {
+        continue; // Skip without logging
+      }
       
       // Check holdoff - log if in holdoff period and DEBUG enabled
       if (!shouldLogEvent(sourceIP_u32, protocol)) {
@@ -483,6 +488,18 @@ bool HoneypotLogging::isBroadcastOrMulticast(uint32_t source_ip, IPAddress local
     return true;
   }
   
+  return false;
+}
+
+// Check whether the given source IP is listed in Config.h excludedHosts[].
+// Returns true if the host should be excluded from honeypot alerting.
+bool HoneypotLogging::isExcludedHost(uint32_t source_ip) {
+  for (int i = 0; i < excludedHostsCount; i++) {
+    const IPAddress& ex = excludedHosts[i];
+    uint32_t ex_u32 = ((uint32_t)ex[0]) | ((uint32_t)ex[1] << 8) |
+                      ((uint32_t)ex[2] << 16) | ((uint32_t)ex[3] << 24);
+    if (source_ip == ex_u32) return true;
+  }
   return false;
 }
 
@@ -552,18 +569,6 @@ bool HoneypotLogging::shouldLogEvent(uint32_t ip, ProtocolType protocol) {
   
   xSemaphoreGive(holdoffMutex);
   return true;
-}
-
-// Combined IP filtering (broadcast/multicast + holdoff)
-bool HoneypotLogging::shouldLogIP(uint32_t sourceIP, ProtocolType protocol, 
-                                   IPAddress localIP, IPAddress subnetMask) {
-  // Filter broadcast/multicast
-  if (isBroadcastOrMulticast(sourceIP, localIP, subnetMask)) {
-    return false;
-  }
-  
-  // Check holdoff
-  return shouldLogEvent(sourceIP, protocol);
 }
 
 // Send email via SMTP relay

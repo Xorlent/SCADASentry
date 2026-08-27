@@ -159,6 +159,7 @@ private:
   
   // Helper methods
   bool isBroadcastOrMulticast(uint32_t source_ip, IPAddress localIP, IPAddress subnetMask);
+  bool isExcludedHost(uint32_t source_ip);
   bool shouldLogEvent(uint32_t ip, ProtocolType protocol);
   bool sendSMTPEmail(const char* subject, const char* body, bool isHtml = false);
   void sendTrap(const uint32_t* trapOid, size_t trapOidLen, const SnmpVarbind* varbinds, size_t varbindCount);
@@ -241,8 +242,6 @@ public:
   // Clear all holdoff tracking arrays (called on a user-requested state reset)
   void resetHoldoff();
   
-  // IP filtering
-  bool shouldLogIP(uint32_t sourceIP, ProtocolType protocol, IPAddress localIP, IPAddress subnetMask);
 };
 
 #endif // HONEYPOT_LOGGING_H
