@@ -49,9 +49,7 @@ struct ClxModule {
 // Full information gathered for one PLC.
 struct ClxPlcInfo {
     IPAddress ipAddress;
-    // Disabled/unused: the hostname and program name are no longer requested
-    // (the reads in getPlcInfo() are commented out) and are not surfaced
-    // anywhere, so these fields were removed to avoid dead allocations.
+    // Hostname and program name are no longer requested to conserve RAM
     // String    hostname;           // TCP/IP host name (TCP/IP Interface object 0xF5 attr 6)
     // String    programName;       // controller program name (Program Name object 0x64)
     String    productName;        // CPU product name (slot 0)
