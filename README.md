@@ -1,6 +1,32 @@
 ## SCADASentry — Low cost SCADA PLC Network Monitor
 Purpose-built Allen Bradley ControlLogix PLC network monitor with SNMP trap or SMTP alerting  
 ![SCADASentry Sensor Image](https://github.com/Xorlent/SCADASentry/blob/main/images/SCADASentry.jpg)
+
+## Table of Contents
+- [Background](#background)
+- [To-do](#to-do)
+- [Requirements](#requirements)
+- [Functional Description](#functional-description)
+  - [Activity monitoring](#activity-monitoring)
+  - [EtherNet/IP monitoring](#ethernetip-monitoring)
+  - [LAN device discovery](#lan-device-discovery)
+  - [Internet and DHCP detection](#internet-and-dhcp-detection)
+- [Firmware Vulnerability Lookup](#firmware-vulnerability-lookup)
+  - [How it works](#how-it-works)
+  - [TXT record format](#txt-record-format)
+  - [Example DNS TXT records](#example-dns-txt-records)
+  - [Result](#result)
+  - [When it runs](#when-it-runs)
+- [Programming](#programming)
+  - [Prepare configuration details for your device](#prepare-configuration-details-for-your-device)
+  - [Configure and flash the device](#configure-and-flash-the-device)
+- [SNMP Trap Reference](#snmp-trap-reference)
+  - [LAN device discovery traps](#lan-device-discovery-traps)
+  - [Device object varbinds](#device-object-varbinds)
+  - [Enumerated varbinds (translated by the MIB)](#enumerated-varbinds-translated-by-the-mib)
+- [Guidance and Notes](#guidance-and-notes)
+- [Technical Information](#technical-information)
+
 ## Background
 This device extends the features of the [PoE Honeypot](https://github.com/Xorlent/PoE-Honeypot) project with purpose-built features for proactively monitoring an Allen Bradley ControlLogix PLC network environment.
 
@@ -15,8 +41,9 @@ This device extends the features of the [PoE Honeypot](https://github.com/Xorlen
 4. An accessible NTP server for time synchronization
 
 ## Functional Description
-SCADASentry is a honeypot that listens on any number of user-configurable TCP and UDP ports and reports activity via **SNMPv2c traps** (or email via SMTP). It is designed to detect devices joining and leaving the local PLC LAN, alerts on scanning, reconnaissance, and lateral movement.  Additionally, SCADASentry reports basic ControlLogix device information and will notify on run-key or firmware version change.
+SCADASentry is a honeypot that listens on any number of user-configurable TCP and UDP ports and reports activity via **SNMPv2c traps** (or email via SMTP). It detects devices joining and leaving the local PLC LAN, alerts on scanning, reconnaissance, and lateral movement, and reports basic ControlLogix device information — notifying on run-key or firmware version changes.
 
+### Activity monitoring
 When unexpected activity is detected, the device immediately sends a trap or email containing the source IP, protocol, destination port (or ICMP type), and service name. The following events are reported:
 
 | Event | Trap |
@@ -28,13 +55,31 @@ When unexpected activity is detected, the device immediately sends a trap or ema
 | IP packet with options (suspicious) | `ipOptionsTrap` |
 | Device comes online (boot or link recovery) | `deviceOnlineTrap` |
 
-The device sends a `deviceOnlineTrap` when it boots (power recovery) or when its Ethernet link recovers, with a `honeypotStartReason` varbind distinguishing the cause (`powerOn` vs `linkUp`).
+The device sends a `deviceOnlineTrap` when it boots (power recovery) or when its Ethernet link recovers, with a `honeypotStartReason` varbind distinguishing the cause (`powerOn` vs `linkUp`). It can also be configured to alert on ICMP ping requests (note: it will not respond to pings when ICMP monitoring is enabled).
 
-For Rockwell Automation / EtherNet/IP broadcast traffic, the device listens on UDP ports **44818** and **2222** and reports only `ListIdentity` browse/discovery traffic (encapsulation command `0x0063`), silently ignoring device I/O data. This detects RSLogix/RSLinx device browsing activity from unauthorized devices.
+### EtherNet/IP monitoring
+For Rockwell Automation / EtherNet/IP broadcast traffic, the device listens on UDP ports **44818** and **2222** and reports only `ListIdentity` browse/discovery traffic, silently ignoring device I/O data. This detects RSLogix/RSLinx device browsing activity from unauthorized devices.
 
-The device also periodically scans the local LAN (every `LAN_SCAN_INTERVAL_SECONDS`, default 240s) using ARP to discover devices. ControlLogix PLCs are identified via an EtherNet/IP `ListIdentity` broadcast and queried over TCP 44818 for their identity, firmware, serial, state, and run-switch mode. ARP-discovered hosts that do not answer the `ListIdentity` broadcast are also probed directly on TCP 44818, so PLCs that suppress discovery responses are still identified. Newly discovered devices are reported via `newDeviceDiscoveredTrap`, including the MAC address and — for PLCs — the vendor, product name, firmware, serial, state, and run-switch mode. Devices that stop responding are reported via `deviceDisappearedTrap` and removed from the tracked-IP holdoff list.  Note that a departed device is detected only after its ARP entry expires (5 minutes), so `deviceDisappearedTrap` can lag a device's actual departure by up to 5 minutes.  For discovered PLCs, the run-switch mode and firmware version are re-checked every Nth scan (default 1h) and reported via `deviceModeChangedTrap` / `deviceFirmwareChangedTrap` when they change.  For each discovered PLC, the device also enumerates the CPU and any Ethernet modules in the rack (including redundant/secondary CPUs) and derives an Advisory CVE search URL for each module from its device type and product name.  These URLs are held in memory (for a future in-memory database) and printed to the serial console in debug mode.  To minimize query load on production PLCs, backplane slots are probed only up to the highest slot previously detected on each PLC; a full re-probe of the remaining (higher) slots runs every `SLOT_EXPANSION_CHECK_MULTIPLIER` scans (default 360, i.e. 24 hours) to catch modules added to higher slots, and the highest detected slot is updated accordingly.  The PLC hostname and program name are read only when a PLC is first detected (or re-detected after it disappears), not on every status re-check.
+### LAN device discovery
+The device periodically scans the local LAN using ARP to discover devices. For each discovered device it:
 
-The device can also be configured to alert on ICMP ping requests (note: it will not respond to pings when ICMP monitoring is enabled).
+- Identifies ControlLogix PLCs via an EtherNet/IP `ListIdentity` broadcast, then queries them over TCP 44818 for identity, firmware, serial, state, and run-switch mode.
+- Probes hosts that do not answer the `ListIdentity` broadcast directly on TCP 44818, so PLCs that suppress discovery responses are still identified.
+- Reports newly discovered devices via `newDeviceDiscoveredTrap`, including the MAC address and — for PLCs — the vendor, product name, firmware, serial, state, and run-switch mode.
+- Reports devices that stop responding via `deviceDisappearedTrap`. A departed device is detected only after its ARP entry expires, so this trap can lag a device's actual departure by up to 5 minutes.
+- Re-checks the run-switch mode and firmware version of discovered PLCs periodically, reporting changes via `deviceModeChangedTrap` / `deviceFirmwareChangedTrap`.
+- Enumerates the CPU and any Ethernet modules in the rack (including redundant/secondary CPUs) and derives an Advisory CVE search URL for each module.
+
+To minimize query load on production PLCs, backplane slots are probed only up to the highest slot previously detected on each PLC, with a periodic full re-probe to catch modules added to higher slots.
+
+### Internet and DHCP detection
+The device periodically probes the local segment for a DHCP server and verifies Internet reachability:
+
+- It retrieves the DHCP server identifier and the advertised default gateway, then tests Internet reachability through that gateway and/or the configured default gateway (a TCP connection to a public anycast IP on port 443, falling back to a DNS query to a public resolver).
+- When Internet access is detected, it reports `internetDetectedTrap`, including the gateway and any DHCP server found.
+- The DHCP probe sends only a DHCPDISCOVER (never a DHCPREQUEST), so it does not obtain or reserve an IP address — the device always keeps its statically-configured IP.
+- If a DHCP server advertises a default gateway outside the device's configured subnet, the device treats it as a rogue DHCP server: it skips testing that gateway and reports `rogueDhcpServerTrap` (including the rogue server IP and the advertised gateway) instead.
+
 ## Firmware Vulnerability Lookup
 SCADASentry can determine whether a discovered ControlLogix CPU or Ethernet module is running firmware with known vulnerabilities. It uses DNS TXT records (no direct CVE database access), so it works entirely against your own DNS infrastructure.
 
@@ -86,7 +131,7 @@ When a lookup cannot be completed (no TXT record, DNS timeout, or an unparseable
 - DNS availability is checked at the start of every LAN scan.
 - Vulnerability status is evaluated when a device is first discovered and re-evaluated on every status check (`LAN_STATUS_CHECK_MULTIPLIER`, default hourly), so newly published advisories are picked up automatically.
 
-The per-module vulnerability status is reflected in email alerts — the firmware version is color-coded (green = `NO`, red = `YES`, black = `N/A`) and firmware-change emails use an `ALERT` subject when vulnerable, otherwise `Notice`. The status is also held in memory (for a future in-memory database), like the advisory search URL.
+The per-module vulnerability status is reflected in email alerts — the firmware version is color-coded (green = `NO`, red = `YES`, black = `N/A`) and firmware-change emails use an `ALERT` subject when vulnerable, otherwise `Notice`. The status is also held in memory, like the advisory search URL.
 
 ## Programming
 ### Prepare configuration details for your device:  
@@ -199,17 +244,14 @@ Every trap also carries the standard `sysUpTime.0` (TimeTicks) and `snmpTrapOID.
 - `internetAccessible`: `no(0)`, `yes(1)`
 - `internetDetectionMethod`: `none(0)`, `tcpConnect(1)`, `dnsQuery(2)`
 
-## Guidance and Limitations
+## Guidance and Notes
 - The device produces SNMPv2c traps on UDP port 162 (community string configurable in Config.h).
 - SMTP alerts require an unauthenticated SMTP relay that is configured to allow the SCADASentry device IP address.
 - TCP and UDP listening ports are fully user-configurable with no constraints.
-- It is recommended you exempt the SCADASentry device IP addresses in any legitimate vulnerability or network scanners to avoid triggering alerts.
+- It is recommended you exempt the SCADASentry device IP addresses in any legitimate vulnerability or network scanners to avoid triggering honeypot alerts.
 - If ICMP is disabled in Config.h, the device will respond to pings from any IP address within the routable network.
-- LAN device discovery scans the local subnet using ARP, so it only sees devices on the same L2 segment (ARP doesn't cross routers).
-- Internet detection probes for a DHCP server on the segment (retrieving both the server identifier and the advertised default gateway) and verifies Internet reachability through that gateway and/or the configured default gateway (TCP connect to a public anycast IP on port 443, falling back to a DNS query to a public resolver). It reports `internetDetectedTrap` when Internet access is detected, including the gateway and any DHCP server found.
-- The Internet detection DHCP probe sends only a DHCPDISCOVER (never a DHCPREQUEST), so it does not obtain or reserve an IP address from any DHCP server; the device always keeps its statically-configured IP.
-- If a DHCP server advertises a default gateway outside the device's statically-configured subnet, the device treats it as a rogue DHCP server: it skips testing that gateway and reports `rogueDhcpServerTrap` (including the rogue server IP and the advertised gateway) instead.
-- A physical reset button (GPIO 45, active-high) clears all detected-device and holdoff state when held for at least 1 second, restarting detection as if the device had just booted.
+- LAN device discovery scans the local subnet using ARP, so it only sees devices on the same L2 segment.
+- Pressing the button on the side of the Unit-PoE-P4 clears all detected-device and holdoff state when held for at least 1 second, restarting detection as if the device had just booted.
 
 ## Technical Information
 - CPU and Memory
