@@ -65,15 +65,15 @@ The device periodically scans the local LAN using ARP to discover devices. For e
 
 - Identifies ControlLogix PLCs via an EtherNet/IP `ListIdentity` broadcast, then queries them over TCP 44818 for identity, firmware, serial, state, and run-switch mode.
 - Probes hosts that do not answer the `ListIdentity` broadcast directly on TCP 44818, so PLCs that suppress discovery responses are still identified.
-- Reports newly discovered devices via `newDeviceDiscoveredTrap`, including the MAC address and - for PLCs - the vendor, product name, firmware, serial, state, and run-switch mode.
+- Reports newly discovered devices via `newDeviceDiscoveredTrap`, including the MAC address and the vendor, product name, firmware, serial, state, and run-switch mode if it is a PLC.
 - Reports devices that stop responding via `deviceDisappearedTrap`. A departed device is detected only after its ARP entry expires, so this trap can lag a device's actual departure by up to 5 minutes.
-- Re-checks the run-switch mode and firmware version of discovered PLCs periodically, reporting changes via `deviceModeChangedTrap` / `deviceFirmwareChangedTrap`.
+- Re-checks the run-switch mode and firmware version of discovered PLCs periodically (configurable), reporting changes via `deviceModeChangedTrap` / `deviceFirmwareChangedTrap`.
 - Enumerates the CPU and any Ethernet modules in the rack (including redundant/secondary CPUs) and derives an Advisory CVE search URL for each module.
 
 To minimize query load on production PLCs, backplane slots are probed only up to the highest slot previously detected on each PLC, with a periodic full re-probe to catch modules added to higher slots.
 
 ### Internet and DHCP detection
-The device periodically probes the local segment for a DHCP server and verifies Internet reachability:
+The device periodically probes the local LAN for a DHCP server and verifies Internet reachability:
 
 - It retrieves the DHCP server identifier and the advertised default gateway, then tests Internet reachability through that gateway and/or the configured default gateway (a TCP connection to a public anycast IP on port 443, falling back to a DNS query to a public resolver).
 - When Internet access is detected, it reports `internetDetectedTrap`, including the gateway and any DHCP server found.
@@ -81,7 +81,7 @@ The device periodically probes the local segment for a DHCP server and verifies 
 - If a DHCP server advertises a default gateway outside the device's configured subnet, the device treats it as a rogue DHCP server: it skips testing that gateway and reports `rogueDhcpServerTrap` (including the rogue server IP and the advertised gateway) instead.
 
 ## Firmware Vulnerability Lookup
-SCADASentry can determine whether a discovered ControlLogix CPU or Ethernet module is running firmware with known vulnerabilities. It uses DNS TXT records (no direct CVE database access), so it works entirely against your own DNS infrastructure.
+SCADASentry can determine whether a discovered ControlLogix CPU or Ethernet module is running firmware with known vulnerabilities. It uses DNS TXT records, so it works using your own DNS infrastructure in a disconnected environment.
 
 ### How it works
 1. For each module, the device extracts the full catalog suffix from the product name (e.g. `1756-EN2T/B` -> `EN2T/B`, `1756-L55/A ...` -> `L55/A`) and converts it to a valid DNS label (`/` becomes `-`, e.g. `EN2T/B` -> `EN2T-B`).
@@ -92,7 +92,7 @@ SCADASentry can determine whether a discovered ControlLogix CPU or Ethernet modu
 The TXT value is the **minimum firmware revision that is _not_ vulnerable**, formatted `major.minor` (e.g. `11.2`), or the literal string `EOL` (case-insensitive) for end-of-life products. For example, `EN2T-B.vuln.plc.local  TXT  "11.2"` marks any `1756-EN2T/B` running firmware older than `11.2` as vulnerable.
 
 ### Example DNS TXT records
-The TXT record name is the module's full catalog suffix (with `/` replaced by `-`) prepended to `vulnSearchSuffix`. For example, a `1756-EN2T/D` module (`EN2T/D` -> `EN2T-D`) with `vulnSearchSuffix = "vuln.plc.local"` resolves `EN2T-D.vuln.plc.local`. For CPUs whose product name has no catalog prefix (e.g. `ControlLogix 5580 Controller`), the short search term (`5580`) is used instead.
+The TXT record name is the module's full catalog suffix (with `/` replaced by `-`) prepended to `vulnSearchSuffix` in Config.h. For example, a `1756-EN2T/D` module (`EN2T/D` -> `EN2T-D`) with `vulnSearchSuffix = "vuln.plc.local"` resolves `EN2T-D.vuln.plc.local`. For CPUs whose product name has no catalog prefix (e.g. `ControlLogix 5580 Controller`), the short search term (`5580`) is used instead.
 
 Starter records (the value is the minimum non-vulnerable firmware, or `EOL`):
 
@@ -123,13 +123,13 @@ L55-A.vuln.plc.local.   IN  TXT  "EOL"
 Each module is marked `YES` (vulnerable), `NO` (not vulnerable), or `N/A` (could not be determined):
 - `YES` - firmware is below the published threshold, or the record is `EOL`.
 - `NO` - firmware is at or above the published threshold.
-- `N/A` - the DNS server was unreachable, or the feature is disabled (empty `vulnSearchSuffix`).
+- `N/A` - the DNS server was unreachable, or the feature is disabled (empty `vulnSearchSuffix` in Config.h).
 
 When a lookup cannot be completed (no TXT record, DNS timeout, or an unparseable value), the module is conservatively treated as **vulnerable**.
 
 ### When it runs
 - DNS availability is checked at the start of every LAN scan.
-- Vulnerability status is evaluated when a device is first discovered and re-evaluated on every status check (`LAN_STATUS_CHECK_MULTIPLIER`, default hourly), so newly published advisories are picked up automatically.
+- Vulnerability status is evaluated when a device is first discovered and re-evaluated on every status check (`LAN_STATUS_CHECK_MULTIPLIER` in Config.h, default hourly), so newly published advisories are picked up automatically.
 
 The per-module vulnerability status is reflected in email alerts - the firmware version is color-coded (green = `NO`, red = `YES`, black = `N/A`) and firmware-change emails use an `ALERT` subject when vulnerable, otherwise `Notice`. The status is also held in memory, like the advisory search URL.
 
@@ -137,13 +137,15 @@ The per-module vulnerability status is reflected in email alerts - the firmware 
 ### Prepare configuration details for your device:  
 - Host name
 - Device IP address, gateway, and subnet mask
-- DNS servers (optional)
-- Vulnerability lookup DNS search suffix (`vulnSearchSuffix`) - optional
+- Local DNS servers (recommended)
+- Vulnerability lookup DNS search suffix (recommended)
 - SNMP trap receiver IP and community string if email (USE_SMTP) is _false_ (default)
-- Email to and from addresses and SMTP relay IP if email (USE_SMTP) is _true_
-- NTP server
+- Email to, from addresses, and SMTP relay IP if email (USE_SMTP) is _true_
+- List of IP addresses on the local PLC LAN that should be ignored by the honeypot (Example: RsLinx/FactoryTalk PC)
+- List of IP addresses that should be excluded from all scans
+- NTP server (required)
 - TCP and/or UDP ports to listen on (defaults are recommended)
-- LAN scan interval, slot expansion check interval, and hosts excluded from network scans (optional)
+- LAN scan interval, slot expansion check interval, and hosts excluded from network scans (defaults are recommended)
 ### Configure and flash the device:
 _Once you've successfully programmed a single unit, skip steps 1 & 2.  Repeating this process takes 3 minutes from start to finish._  
 1. [Set up your Arduino programming environment](https://github.com/Xorlent/SCADASentry/blob/main/ARDUINO-SETUP.md)
@@ -156,7 +158,7 @@ _Once you've successfully programmed a single unit, skip steps 1 & 2.  Repeating
 > [!WARNING]
 > Do not plug the device into a PoE-powered Ethernet port until after step 6 or you risk damaging your USB port!
 4. In Arduino
-   - Edit Config.h with configuration details for the device
+   - Edit Config.h with configuration details you have collected for the device
    - Select Sketch->Upload to flash the device
    - When you see something similar to the following, proceed to step 5
 ```
