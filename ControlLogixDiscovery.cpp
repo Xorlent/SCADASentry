@@ -640,10 +640,16 @@ bool ControlLogixDiscovery::getPlcInfo(const IPAddress& ip, ClxPlcInfo& info,
     info.modules.push_back(cpuMod);
 
     // --- Hostname (TCP/IP Interface object, attribute 6) ---
-    if (readNames) readHostname(info.hostname, timeoutMs);   // best-effort; may be empty
+    // Tested and working, but currently disabled/unused: the hostname is not
+    // surfaced anywhere (DeviceEntry has no hostname field, to conserve RAM), so
+    // this read would only add a round-trip per status check with no consumer.
+    // if (readNames) readHostname(info.hostname, timeoutMs);   // best-effort; may be empty
 
     // --- Program name (Program Name object 0x64) ---
-    if (readNames) readProgramName(info.programName, timeoutMs);   // best-effort; may be empty
+    // Tested and working, but currently disabled/unused: the program name is not
+    // surfaced anywhere (DeviceEntry has no programName field, to conserve RAM),
+    // so this read would only add a round-trip per status check with no consumer.
+    // if (readNames) readProgramName(info.programName, timeoutMs);   // best-effort; may be empty
 
     // --- Scan slots 1..maxSlot for additional CPUs and Ethernet modules ---
     for (uint8_t slot = 1; slot <= maxSlot; slot++) {

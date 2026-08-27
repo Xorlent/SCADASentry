@@ -185,10 +185,7 @@ public:
   void begin();
   
   // Thread-safe Serial printing
-  void safePrint(const char* msg);
   void safePrintln(const char* msg);
-  void safePrint(unsigned long val);
-  void safePrintln(unsigned long val);
   
   // SMTP async methods
   void beginSMTPTask();

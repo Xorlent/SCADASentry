@@ -249,27 +249,9 @@ void HoneypotLogging::sendTrap(const uint32_t* trapOid, size_t trapOidLen,
 }
 
 // Thread-safe Serial functions
-void HoneypotLogging::safePrint(const char* msg) {
-  xSemaphoreTake(serialMutex, portMAX_DELAY);
-  Serial.print(msg);
-  xSemaphoreGive(serialMutex);
-}
-
 void HoneypotLogging::safePrintln(const char* msg) {
   xSemaphoreTake(serialMutex, portMAX_DELAY);
   Serial.println(msg);
-  xSemaphoreGive(serialMutex);
-}
-
-void HoneypotLogging::safePrint(unsigned long val) {
-  xSemaphoreTake(serialMutex, portMAX_DELAY);
-  Serial.print(val);
-  xSemaphoreGive(serialMutex);
-}
-
-void HoneypotLogging::safePrintln(unsigned long val) {
-  xSemaphoreTake(serialMutex, portMAX_DELAY);
-  Serial.println(val);
   xSemaphoreGive(serialMutex);
 }
 

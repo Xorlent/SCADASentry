@@ -49,8 +49,11 @@ struct ClxModule {
 // Full information gathered for one PLC.
 struct ClxPlcInfo {
     IPAddress ipAddress;
-    String    hostname;           // TCP/IP host name (TCP/IP Interface object 0xF5 attr 6)
-    String    programName;       // controller program name (Program Name object 0x64)
+    // Disabled/unused: the hostname and program name are no longer requested
+    // (the reads in getPlcInfo() are commented out) and are not surfaced
+    // anywhere, so these fields were removed to avoid dead allocations.
+    // String    hostname;           // TCP/IP host name (TCP/IP Interface object 0xF5 attr 6)
+    // String    programName;       // controller program name (Program Name object 0x64)
     String    productName;        // CPU product name (slot 0)
     uint16_t  vendorId;           // CIP vendor ID (e.g. 1 = Rockwell Automation)
     String    keyswitch;          // "RUN", "REMOTE RUN", "PROG", "REMOTE PROG", "UNKNOWN"
