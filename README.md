@@ -141,7 +141,8 @@ The per-module vulnerability status is reflected in email alerts - the firmware 
 - Vulnerability lookup DNS search suffix (recommended)
 - SNMP trap receiver IP and community string if email (USE_SMTP) is _false_ (default)
 - Email to, from addresses, and SMTP relay IP if email (USE_SMTP) is _true_
-- List of IP addresses on the local PLC LAN that should be ignored by the honeypot (Example: RsLinx/FactoryTalk PC)
+- List of IP addresses on the local PLC LAN that should be ignored by the honeypot
+  - Example: RsLinx/FactoryTalk PC
 - List of IP addresses that should be excluded from all scans
 - NTP server (required)
 - TCP and/or UDP ports to listen on (defaults are recommended)
