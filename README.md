@@ -41,10 +41,10 @@ SCADASentry can determine whether a discovered ControlLogix CPU or Ethernet modu
 ### How it works
 1. For each module, the device extracts the full catalog suffix from the product name (e.g. `1756-EN2T/B` → `EN2T/B`, `1756-L55/A …` → `L55/A`) and converts it to a valid DNS label (`/` becomes `-`, e.g. `EN2T/B` → `EN2T-B`).
 2. It prepends that label to `vulnSearchSuffix` (Config.h) to form the TXT record name, e.g. `EN2T-B.vuln.plc.local`.
-3. It queries the configured DNS servers (`dns1`, then `dns2`) for a TXT record at that name, with a 1-second timeout.
+3. It queries the configured DNS servers (`dns1`, then `dns2`) for a TXT record at that name.
 
 ### TXT record format
-The TXT value is the **minimum firmware revision that is not vulnerable**, formatted `major.minor` (e.g. `11.2`), or the literal string `EOL` (case-insensitive) for end-of-life products. For example, `EN2T-B.vuln.plc.local  TXT  "11.2"` marks any `1756-EN2T/B` running firmware older than `11.2` as vulnerable.
+The TXT value is the **minimum firmware revision that is _not_ vulnerable**, formatted `major.minor` (e.g. `11.2`), or the literal string `EOL` (case-insensitive) for end-of-life products. For example, `EN2T-B.vuln.plc.local  TXT  "11.2"` marks any `1756-EN2T/B` running firmware older than `11.2` as vulnerable.
 
 ### Example DNS TXT records
 The TXT record name is the module's full catalog suffix (with `/` replaced by `-`) prepended to `vulnSearchSuffix`. For example, a `1756-EN2T/D` module (`EN2T/D` → `EN2T-D`) with `vulnSearchSuffix = "vuln.plc.local"` resolves `EN2T-D.vuln.plc.local`. For CPUs whose product name has no catalog prefix (e.g. `ControlLogix 5580 Controller`), the short search term (`5580`) is used instead.
