@@ -40,21 +40,17 @@ static const uint8_t KEYSWITCH_REMOTE_1 = 0x31;
 
 // Maximum CIP response data size (receive buffer for CIP replies).
 static const uint16_t MAX_CIP_RESPONSE = 256;
+// Maximum acceptable SendRRData response body length.
+static const uint16_t MAX_RESPONSE_BODY = 512;
 
 static const uint16_t CIP_PORT = 44818;
-
-// Maximum acceptable SendRRData response body length. The CIP data item is
-// bounded by the 256-byte receive buffer, so a 512-byte cap (16-byte item
-// header + 256-byte data + headroom) is more than enough and prevents a
-// malicious/broken device from forcing a huge heap allocation.
-static const uint16_t MAX_RESPONSE_BODY = 512;
 
 // All-zero encapsulation context (sender context bytes are unused here).
 static const uint8_t ZERO_CONTEXT[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 
 // Placeholder slot reported for a directly-connected Ethernet bridge when its
-// backplane slot cannot be recovered. Older bridges (e.g. the 1756-ENBT/A,
-// firmware 3.6) do not expose their slot in the Identity object and do not
+// backplane slot cannot be recovered. Older bridges (e.g. the 1756-ENBT)
+// do not expose their slot in the Identity object and do not
 // honor a backplane route to their own slot, so they are read directly and
 // reported under this sentinel (distinct from slot 0 = CPU).
 static const uint8_t SLOT_DIRECT_BRIDGE = 0xFF;
@@ -136,6 +132,7 @@ static void buildGetIdentitySingle(std::vector<uint8_t>& out, uint8_t attr) {
     out.push_back(0x30); out.push_back(attr);           // attribute
 }
 
+// CURRENTLY UNUSED
 // ---------------------------------------------------------------------------
 // Build the embedded "Get Attribute Single" request for the TCP/IP Interface
 // object (class 0xF5), instance 1, attribute 6 (Host Name).
@@ -150,6 +147,7 @@ static void buildGetHostname(std::vector<uint8_t>& out) {
     out.push_back(0x30); out.push_back(0x06);                   // attribute 6
 }
 
+// CURRENTLY UNUSED
 // ---------------------------------------------------------------------------
 // Build the embedded "Get Attributes All" request for the Program Name object
 // (class 0x64, instance 1). Result: 01 02 20 64 24 01
