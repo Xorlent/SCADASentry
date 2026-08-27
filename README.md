@@ -10,6 +10,7 @@
   - [Activity monitoring](#activity-monitoring)
   - [EtherNet/IP monitoring](#ethernetip-monitoring)
   - [LAN device discovery](#lan-device-discovery)
+  - [Minimizing PLC impact](#minimizing-plc-impact)
   - [Internet and DHCP detection](#internet-and-dhcp-detection)
 - [Firmware Vulnerability Lookup](#firmware-vulnerability-lookup)
   - [How it works](#how-it-works)
@@ -28,7 +29,11 @@
 - [Technical Information](#technical-information)
 
 ## Background
-This device extends the features of the [PoE Honeypot](https://github.com/Xorlent/PoE-Honeypot) project with purpose-built features for proactively monitoring an Allen Bradley ControlLogix PLC network environment.
+Commercial OT/SCADA vulnerability and monitoring platforms are expensive to license, time-consuming to stand up, and finicky to keep running - and once they are running they tend to flood operators with unnecessary alerts that drown out the signal that actually matters. For many plant operations, that overhead can be hard to justify, especially for smaller deployments.
+
+SCADASentry takes a different approach. It is a purpose-built, ultra low-cost (~$21.50 in hardware), zero-maintenance device that plugs into a PoE port and quietly watches your PLC LAN. It reports only the events that matter: new or departed devices, run-key and firmware changes, and scanning/reconnaissance activity - All via standard SNMP traps or email.  No servers, specialized network appliances, span ports, agent software, cloud dependency, and no tuning required.
+
+This device has beeh purpose-built with features for proactively monitoring an Allen Bradley ControlLogix PLC network environment.
 
 ## To-do
 - End-to-end SMTP testing
@@ -71,7 +76,12 @@ The device periodically scans the local LAN using ARP to discover devices. For e
 - Re-checks the run-switch mode and firmware version of discovered PLCs periodically (configurable), reporting changes via `deviceModeChangedTrap` / `deviceFirmwareChangedTrap`.
 - Enumerates the CPU and any Ethernet modules in the rack (including redundant/secondary CPUs) and derives an Advisory CVE search URL for each module.
 
-To minimize query load on production PLCs, backplane slots are probed only up to the highest slot previously detected on each PLC, with a periodic full re-probe to catch modules added to higher slots.
+### Minimizing PLC impact
+SCADASentry is designed to be a passive observer of production PLCs, so it goes out of its way to avoid disturbing the controllers it monitors.
+
+**No ICMP traffic.** Device discovery does not use ICMP echo requests (ping). Instead, the device sweeps the local subnet with ARP requests (`etharp_request`), which are answered by the network interface at the link layer and never touch a PLC's IP stack or CPU the way an ICMP echo would. Each host is probed with a single ARP request, and requests are throttled between hosts (`LAN_SCAN_ARP_THROTTLE_MS` in Config.h) to keep the scan's impact on the segment low.
+
+**Only the data we need.** When querying a discovered PLC, the device reads only the CIP Identity object - product name, firmware revision, keyswitch position, serial number, and state - plus the Identity of each CPU and Ethernet module in the rack. Backplane slots are probed only up to the highest slot previously detected on each PLC, with a periodic full re-probe to catch modules added to higher slots (`SLOT_EXPANSION_CHECK_MULTIPLIER` in Config.h).
 
 ### Internet and DHCP detection
 The device periodically probes the local LAN for a DHCP server and verifies Internet reachability:
