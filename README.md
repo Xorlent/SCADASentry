@@ -118,7 +118,8 @@ Each record's full name is `<label>.<vulnSearchSuffix>` (e.g. `EN2T-D.vuln.plc.l
 EN2T-D.vuln.plc.local.  IN  TXT  "12.002"
 L55-A.vuln.plc.local.   IN  TXT  "EOL"
 ```
-
+Windows DNS Server example:  
+[DNS Vulnerability DB](https://github.com/Xorlent/SCADASentry/blob/main/images/DNSVulnerabilityDB.png)
 ### Result
 Each module is marked `YES` (vulnerable), `NO` (not vulnerable), or `N/A` (could not be determined):
 - `YES` - firmware is below the published threshold, or the record is `EOL`.
