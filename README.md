@@ -1,5 +1,5 @@
 ## SCADASentry - Low cost SCADA PLC Network Monitor
-Purpose-built Allen Bradley ControlLogix PLC network monitor with SNMP trap or SMTP alerting  
+Purpose-built Allen Bradley ControlLogix PLC network and vulnerability monitor with SNMP trap or SMTP alerting  
 ![SCADASentry Sensor Image](https://github.com/Xorlent/SCADASentry/blob/main/images/SCADASentry.jpg)
 
 ## Table of Contents
