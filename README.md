@@ -141,9 +141,9 @@ The per-module vulnerability status is reflected in email alerts - the firmware 
 - Vulnerability lookup DNS search suffix (recommended)
 - SNMP trap receiver IP and community string if email (USE_SMTP) is _false_ (default)
 - Email to, from addresses, and SMTP relay IP if email (USE_SMTP) is _true_
-- List of IP addresses on the local PLC LAN that should be ignored by the honeypot
-  - Example: RsLinx/FactoryTalk PC
-- List of IP addresses that should be excluded from all scans
+- List of IP addresses (`excludedHosts` in Config.h) to exclude from the LAN scan and from honeypot alerting (traffic from these IPs does not generate alerts)
+  - Example: RSLinx/FactoryTalk PC
+- List of PLC IP addresses (`excludedPLCs` in Config.h) to exclude from ARP and EtherNet/IP discovery (these PLCs are not probed and not reported, even if they answer the `ListIdentity` broadcast)
 - NTP server (required)
 - TCP and/or UDP ports to listen on (defaults are recommended)
 - LAN scan interval, slot expansion check interval, and hosts excluded from network scans (defaults are recommended)
@@ -175,7 +175,7 @@ Hard resetting via RTS pin...
      - If you did not immediately open the serial monitor, you may need to re-connect the device to see the configuration check output
 6. When configuration is complete, disconnect the USB cable
 7. Connect the device to a PoE network port and mount as appropriate
-8. Configure your SNMP trap alerts:
+8. If using SNMP (versus SMTP), configure your SNMP trap alerts:
     - Import SCADASENTRY-MIB.mib into your NMS to resolve trap OIDs to human-readable names
     - Add alert triggers based on traps received from the device to get immediate notice of potential scanning and lateral movement
     - Example trap for IP 10.70.103.12 connecting to TCP port 443:

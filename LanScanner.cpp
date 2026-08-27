@@ -530,11 +530,21 @@ void LanScanner::runScan() {
     logger->safePrintln(buf);
   }
 
+  // Remove excluded PLCs from the discovery results so they are never probed
+  // or reported, even if they answered the ListIdentity broadcast.
+  for (size_t i = 0; i < discovered.size(); ) {
+    if (isExcludedPLC(discovered[i].ipAddress)) {
+      discovered.erase(discovered.begin() + i);
+    } else {
+      i++;
+    }
+  }
+
   // 2. Sweep the LAN range (ARP) to discover all devices and their MACs.
   IPAddress ip = networkAddr;
   nextHost(ip);  // skip the network address
   while (ip != broadcastAddr) {
-    if (ip == gateway || ip == localIP || isExcluded(ip)) {
+    if (ip == gateway || ip == localIP || isExcluded(ip) || isExcludedPLC(ip)) {
       nextHost(ip);
       continue;
     }
@@ -721,6 +731,13 @@ void LanScanner::runScan() {
 bool LanScanner::isExcluded(IPAddress ip) {
   for (int i = 0; i < excludedHostsCount; i++) {
     if (ip == excludedHosts[i]) return true;
+  }
+  return false;
+}
+
+bool LanScanner::isExcludedPLC(IPAddress ip) {
+  for (int i = 0; i < excludedPLCCount; i++) {
+    if (ip == excludedPLCs[i]) return true;
   }
   return false;
 }

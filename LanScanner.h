@@ -93,6 +93,7 @@ private:
 
   // Helpers
   bool isExcluded(IPAddress ip);
+  bool isExcludedPLC(IPAddress ip);
   int findDevice(IPAddress ip);
   bool arpProbe(IPAddress ip, uint32_t timeoutMs);
   bool getMac(IPAddress ip, uint8_t mac[6]);

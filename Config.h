@@ -184,9 +184,18 @@ const bool DEBUG = true;
 
     // IP addresses to exclude from the LAN scan (in addition to this device's
     // network address, broadcast address, and default gateway, which are
-    // always skipped).
+    // always skipped). These addresses are also excluded from honeypot
+    // alerting: traffic with any of these IPs as the source will not generate
+    // honeypot alerts.
     const IPAddress excludedHosts[] = {
         // IPAddress(192, 168, 1, 10),  // example: exclude a specific host
+    };
+
+    // PLC IP addresses to exclude from ARP and EtherNet/IP discovery. Unlike
+    // excludedHosts, these are also ignored if they answer the ListIdentity
+    // broadcast: they are not probed and not reported as discovered devices.
+    const IPAddress excludedPLCs[] = {
+        // IPAddress(192, 168, 1, 20),  // example: exclude a specific PLC
     };
 
 ////////// Internet Detection Configuration //////////
@@ -232,6 +241,7 @@ const bool DEBUG = true;
     const uint16_t honeypotNumUDPPorts = sizeof(honeypotUDPPorts)/sizeof(honeypotUDPPorts[0]);
     const uint16_t honeypotNumICMPTypes = sizeof(honeypotICMPTypes)/sizeof(honeypotICMPTypes[0]);
     const uint16_t excludedHostsCount = sizeof(excludedHosts)/sizeof(excludedHosts[0]);
+    const uint16_t excludedPLCCount = sizeof(excludedPLCs)/sizeof(excludedPLCs[0]);
     const uint16_t internetTcpProbeHostCount = sizeof(internetTcpProbeHosts)/sizeof(internetTcpProbeHosts[0]);
 
 #endif // CONFIG_H
