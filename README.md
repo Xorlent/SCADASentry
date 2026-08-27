@@ -32,14 +32,68 @@ The device sends a `deviceOnlineTrap` when it boots (power recovery) or when its
 
 For Rockwell Automation / EtherNet/IP broadcast traffic, the device listens on UDP ports **44818** and **2222** and reports only `ListIdentity` browse/discovery traffic (encapsulation command `0x0063`), silently ignoring device I/O data. This detects RSLogix/RSLinx device browsing activity from unauthorized devices.
 
-The device also periodically scans the local LAN (every `LAN_SCAN_INTERVAL_SECONDS`, default 240s) using ARP to discover devices. ControlLogix PLCs are identified via an EtherNet/IP `ListIdentity` broadcast and queried over TCP 44818 for their identity, firmware, serial, state, and run-switch mode. Newly discovered devices are reported via `newDeviceDiscoveredTrap`, including the MAC address and — for PLCs — the vendor, product name, firmware, serial, state, and run-switch mode. Devices that stop responding are reported via `deviceDisappearedTrap` and removed from the tracked-IP holdoff list.  Note that a departed device is detected only after its ARP entry expires (5 minutes), so `deviceDisappearedTrap` can lag a device's actual departure by up to 5 minutes.  For discovered PLCs, the run-switch mode and firmware version are re-checked every Nth scan (default 1h) and reported via `deviceModeChangedTrap` / `deviceFirmwareChangedTrap` when they change.  For each discovered PLC, the device also enumerates the CPU and any Ethernet modules in the rack (including redundant/secondary CPUs) and derives an Advisory CVE search URL for each module from its device type and product name.  These URLs are held in memory (for a future in-memory database) and printed to the serial console in debug mode.  To minimize query load on production PLCs, backplane slots are probed only up to the highest slot previously detected on each PLC; a full re-probe of the remaining (higher) slots runs every `SLOT_EXPANSION_CHECK_MULTIPLIER` scans (default 360, i.e. 24 hours) to catch modules added to higher slots, and the highest detected slot is updated accordingly.  The PLC hostname and program name are read only when a PLC is first detected (or re-detected after it disappears), not on every status re-check.
+The device also periodically scans the local LAN (every `LAN_SCAN_INTERVAL_SECONDS`, default 240s) using ARP to discover devices. ControlLogix PLCs are identified via an EtherNet/IP `ListIdentity` broadcast and queried over TCP 44818 for their identity, firmware, serial, state, and run-switch mode. ARP-discovered hosts that do not answer the `ListIdentity` broadcast are also probed directly on TCP 44818, so PLCs that suppress discovery responses are still identified. Newly discovered devices are reported via `newDeviceDiscoveredTrap`, including the MAC address and — for PLCs — the vendor, product name, firmware, serial, state, and run-switch mode. Devices that stop responding are reported via `deviceDisappearedTrap` and removed from the tracked-IP holdoff list.  Note that a departed device is detected only after its ARP entry expires (5 minutes), so `deviceDisappearedTrap` can lag a device's actual departure by up to 5 minutes.  For discovered PLCs, the run-switch mode and firmware version are re-checked every Nth scan (default 1h) and reported via `deviceModeChangedTrap` / `deviceFirmwareChangedTrap` when they change.  For each discovered PLC, the device also enumerates the CPU and any Ethernet modules in the rack (including redundant/secondary CPUs) and derives an Advisory CVE search URL for each module from its device type and product name.  These URLs are held in memory (for a future in-memory database) and printed to the serial console in debug mode.  To minimize query load on production PLCs, backplane slots are probed only up to the highest slot previously detected on each PLC; a full re-probe of the remaining (higher) slots runs every `SLOT_EXPANSION_CHECK_MULTIPLIER` scans (default 360, i.e. 24 hours) to catch modules added to higher slots, and the highest detected slot is updated accordingly.  The PLC hostname and program name are read only when a PLC is first detected (or re-detected after it disappears), not on every status re-check.
 
 The device can also be configured to alert on ICMP ping requests (note: it will not respond to pings when ICMP monitoring is enabled).
+## Firmware Vulnerability Lookup
+SCADASentry can determine whether a discovered ControlLogix CPU or Ethernet module is running firmware with known vulnerabilities. It uses DNS TXT records (no direct CVE database access), so it works entirely against your own DNS infrastructure.
+
+### How it works
+1. For each module, the device extracts the full catalog suffix from the product name (e.g. `1756-EN2T/B` → `EN2T/B`, `1756-L55/A …` → `L55/A`) and converts it to a valid DNS label (`/` becomes `-`, e.g. `EN2T/B` → `EN2T-B`).
+2. It prepends that label to `vulnSearchSuffix` (Config.h) to form the TXT record name, e.g. `EN2T-B.vuln.plc.local`.
+3. It queries the configured DNS servers (`dns1`, then `dns2`) for a TXT record at that name, with a 1-second timeout.
+
+### TXT record format
+The TXT value is the **minimum firmware revision that is not vulnerable**, formatted `major.minor` (e.g. `11.2`), or the literal string `EOL` (case-insensitive) for end-of-life products. For example, `EN2T-B.vuln.plc.local  TXT  "11.2"` marks any `1756-EN2T/B` running firmware older than `11.2` as vulnerable.
+
+### Example DNS TXT records
+The TXT record name is the module's full catalog suffix (with `/` replaced by `-`) prepended to `vulnSearchSuffix`. For example, a `1756-EN2T/D` module (`EN2T/D` → `EN2T-D`) with `vulnSearchSuffix = "vuln.plc.local"` resolves `EN2T-D.vuln.plc.local`. For CPUs whose product name has no catalog prefix (e.g. `ControlLogix 5580 Controller`), the short search term (`5580`) is used instead.
+
+Starter records (the value is the minimum non-vulnerable firmware, or `EOL`):
+
+| Label | TXT value | Module |
+|-------|-----------|--------|
+| `5580` | `37.013` | ControlLogix 5580 CPU |
+| `L55-A` | `EOL` | 1756-L55 |
+| `ENBT-A` | `EOL` | 1756-ENBT |
+| `EN2T-A` | `EOL` | 1756-EN2T |
+| `EN2T-B` | `EOL` | 1756-EN2T |
+| `EN2T-C` | `EOL` | 1756-EN2T |
+| `EN2T-D` | `12.002` | 1756-EN2T |
+| `EN2F-A` | `EOL` | 1756-EN2F |
+| `EN2F-B` | `EOL` | 1756-EN2F |
+| `EN2F-C` | `12.002` | 1756-EN2F |
+| `EN3TR-A` | `EOL` | 1756-EN3TR |
+| `EN3TR-B` | `12.002` | 1756-EN3TR |
+| `EN3TR-C` | `12.002` | 1756-EN3TR |
+
+Each record's full name is `<label>.<vulnSearchSuffix>` (e.g. `EN2T-D.vuln.plc.local`). In a zone file:
+
+```
+EN2T-D.vuln.plc.local.  IN  TXT  "12.002"
+L55-A.vuln.plc.local.   IN  TXT  "EOL"
+```
+
+### Result
+Each module is marked `YES` (vulnerable), `NO` (not vulnerable), or `N/A` (could not be determined):
+- `YES` — firmware is below the published threshold, or the record is `EOL`.
+- `NO` — firmware is at or above the published threshold.
+- `N/A` — the DNS server was unreachable, or the feature is disabled (empty `vulnSearchSuffix`).
+
+When a lookup cannot be completed (no TXT record, DNS timeout, or an unparseable value), the module is conservatively treated as **vulnerable**.
+
+### When it runs
+- DNS availability is checked at the start of every LAN scan.
+- Vulnerability status is evaluated when a device is first discovered and re-evaluated on every status check (`LAN_STATUS_CHECK_MULTIPLIER`, default hourly), so newly published advisories are picked up automatically.
+
+The per-module vulnerability status is reflected in email alerts — the firmware version is color-coded (green = `NO`, red = `YES`, black = `N/A`) and firmware-change emails use an `ALERT` subject when vulnerable, otherwise `Notice`. The status is also held in memory (for a future in-memory database), like the advisory search URL.
+
 ## Programming
 ### Prepare configuration details for your device:  
 - Host name
 - Device IP address, gateway, and subnet mask
 - DNS servers (optional)
+- Vulnerability lookup DNS search suffix (`vulnSearchSuffix`) — optional
 - SNMP trap receiver IP and community string if email (USE_SMTP) is _false_ (default)
 - Email to and from addresses and SMTP relay IP if email (USE_SMTP) is _true_
 - NTP server

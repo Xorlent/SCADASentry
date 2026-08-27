@@ -707,7 +707,7 @@ void HoneypotLogging::logEvent(EventType eventType, uint16_t portOrType, IPAddre
   if (useSMTP) {
     // Build email subject
     char subject[128];
-    snprintf(subject, sizeof(subject), "[%s Alert] Honeypot traffic detected (%s)", 
+    snprintf(subject, sizeof(subject), "[%s ALERT] Honeypot traffic detected (%s)", 
              (const char*)hostname, eventTypeName(eventType));
 
     // Build email body with service name
@@ -831,7 +831,7 @@ void HoneypotLogging::sendDeviceOnlineTrap(DeviceOnlineReason reason) {
   // SMTP mode: send email notification instead
   if (useSMTP) {
     char subject[128];
-    snprintf(subject, sizeof(subject), "[%s Alert] Device online (%s)", (const char*)hostname, reasonStr);
+    snprintf(subject, sizeof(subject), "[%s ALERT] Device online (%s)", (const char*)hostname, reasonStr);
     char body[256];
     snprintf(body, sizeof(body),
              "Honeypot: %s (%d.%d.%d.%d)\nTimestamp: %s UTC\nStatus: Device online\nReason: %s\n",
@@ -879,6 +879,14 @@ void HoneypotLogging::sendDeviceOnlineTrap(DeviceOnlineReason reason) {
   sendTrap(OID_TRAP_DEVICE_ONLINE, sizeof(OID_TRAP_DEVICE_ONLINE) / sizeof(uint32_t), varbinds, vbCount);
 }
 
+// Map a module vulnerability status ("YES"/"NO"/"N/A") to an HTML color for
+// the firmware version in email alerts.
+static const char* vulnerabilityColor(const char* isVulnerable) {
+  if (strcmp(isVulnerable, "NO") == 0) return "green";
+  if (strcmp(isVulnerable, "YES") == 0) return "red";
+  return "black";  // "N/A" (or unknown)
+}
+
 // Send a newDeviceDiscoveredTrap for a LAN-discovered device
 void HoneypotLogging::sendNewDeviceTrap(IPAddress deviceIp, const uint8_t mac[6], bool isPlc,
                                         uint16_t vendor, const char* productName, const char* firmware,
@@ -892,7 +900,7 @@ void HoneypotLogging::sendNewDeviceTrap(IPAddress deviceIp, const uint8_t mac[6]
   // SMTP mode: send email notification instead
   if (useSMTP) {
     char subject[128];
-    snprintf(subject, sizeof(subject), "[%s Alert] New %s discovered",
+    snprintf(subject, sizeof(subject), "[%s Notice] New %s discovered",
              (const char*)hostname, isPlc ? "PLC" : "device");
 
     char macStr[18];
@@ -941,16 +949,20 @@ void HoneypotLogging::sendNewDeviceTrap(IPAddress deviceIp, const uint8_t mac[6]
         // SLOT_DIRECT_BRIDGE); its backplane slot is not exposed.
         if (m.slot == 0xFF) {
           len += snprintf(body + len, sizeof(body) - len,
-                   "<tr><td>Ethernet bridge (direct)</td><td>%s</td><td>%u.%u</td>"
+                   "<tr><td>Ethernet bridge (direct)</td><td>%s</td>"
+                   "<td><b style=\"color:%s\">%u.%u</b></td>"
                    "<td><a href=\"%s\">CVE search</a></td></tr>",
                    m.productName,
+                   vulnerabilityColor(m.isVulnerable),
                    (unsigned)m.majorRevision, (unsigned)m.minorRevision,
                    m.advisoryUrl);
         } else {
           len += snprintf(body + len, sizeof(body) - len,
-                   "<tr><td>Slot %u (%s)</td><td>%s</td><td>%u.%u</td>"
+                   "<tr><td>Slot %u (%s)</td><td>%s</td>"
+                   "<td><b style=\"color:%s\">%u.%u</b></td>"
                    "<td><a href=\"%s\">CVE search</a></td></tr>",
                    (unsigned)m.slot, typeStr, m.productName,
+                   vulnerabilityColor(m.isVulnerable),
                    (unsigned)m.majorRevision, (unsigned)m.minorRevision,
                    m.advisoryUrl);
         }
@@ -1104,7 +1116,7 @@ void HoneypotLogging::sendNewDeviceTrap(IPAddress deviceIp, const uint8_t mac[6]
   sendTrap(OID_TRAP_NEW_DEVICE, sizeof(OID_TRAP_NEW_DEVICE) / sizeof(uint32_t), varbinds, vbCount);
 }
 
-// Send a deviceDisappearedTrap for a device that no longer responds to ping
+// Send a deviceDisappearedTrap for a device that no longer answers ARP
 void HoneypotLogging::sendDeviceGoneTrap(IPAddress deviceIp, const uint8_t mac[6], bool isPlc) {
   char eventTimeStr[32];
   const char* timeStr = ntpClient->formattedTime("%Y-%m-%dT%H:%M:%SZ");
@@ -1114,7 +1126,7 @@ void HoneypotLogging::sendDeviceGoneTrap(IPAddress deviceIp, const uint8_t mac[6
   // SMTP mode: send email notification instead
   if (useSMTP) {
     char subject[128];
-    snprintf(subject, sizeof(subject), "[%s Alert] %s disappeared",
+    snprintf(subject, sizeof(subject), "[%s Notice] %s disappeared",
              (const char*)hostname, isPlc ? "PLC" : "Device");
 
     char macStr[18];
@@ -1187,7 +1199,7 @@ void HoneypotLogging::sendDeviceModeChangeTrap(IPAddress deviceIp, const uint8_t
     if (mode == 1) {
       snprintf(subject, sizeof(subject), "[%s Alert CLEARED] PLC returned to RUN mode", (const char*)hostname);
     } else {
-      snprintf(subject, sizeof(subject), "[%s Alert] PLC not in RUN mode!", (const char*)hostname);
+      snprintf(subject, sizeof(subject), "[%s ALERT] PLC not in RUN mode!", (const char*)hostname);
     }
 
     char macStr[18];
@@ -1264,7 +1276,12 @@ void HoneypotLogging::sendDeviceModeChangeTrap(IPAddress deviceIp, const uint8_t
 void HoneypotLogging::sendDeviceFirmwareChangeTrap(IPAddress deviceIp, const uint8_t mac[6],
                                                    const char* productName,
                                                    const char* prevFirmware, const char* firmware,
-                                                   const char* advisoryUrl) {
+                                                   const char* advisoryUrl, const char* isVulnerable) {
+  // Suppress non-vulnerable firmware-change notifications unless enabled.
+  if (strcmp(isVulnerable, "NO") == 0 && !notifyNotVulnerable) {
+    return;
+  }
+
   char eventTimeStr[32];
   const char* timeStr = ntpClient->formattedTime("%Y-%m-%dT%H:%M:%SZ");
   strncpy(eventTimeStr, timeStr, sizeof(eventTimeStr) - 1);
@@ -1273,7 +1290,11 @@ void HoneypotLogging::sendDeviceFirmwareChangeTrap(IPAddress deviceIp, const uin
   // SMTP mode: send email notification instead
   if (useSMTP) {
     char subject[128];
-    snprintf(subject, sizeof(subject), "[%s Notice] PLC CPU firmware changed", (const char*)hostname);
+    if (strcmp(isVulnerable, "YES") == 0) {
+      snprintf(subject, sizeof(subject), "[%s ALERT] PLC CPU firmware changed", (const char*)hostname);
+    } else {
+      snprintf(subject, sizeof(subject), "[%s Notice] PLC CPU firmware changed", (const char*)hostname);
+    }
 
     char macStr[18];
     snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
@@ -1290,7 +1311,7 @@ void HoneypotLogging::sendDeviceFirmwareChangeTrap(IPAddress deviceIp, const uin
              "<tr><td><b>Device IP:</b></td><td>%d.%d.%d.%d</td></tr>"
              "<tr><td><b>MAC:</b></td><td>%s</td></tr>"
              "<tr><td><b>Product:</b></td><td>%s</td></tr>"
-             "<tr><td><b>Firmware:</b></td><td>%s -&gt; %s</td></tr>"
+             "<tr><td><b>Firmware:</b></td><td>%s -&gt; <b style=\"color:%s\">%s</b></td></tr>"
              "</table>"
              "<p><a href=\"%s\">Advisory CVE search</a></p>"
              "</body></html>",
@@ -1299,7 +1320,7 @@ void HoneypotLogging::sendDeviceFirmwareChangeTrap(IPAddress deviceIp, const uin
              deviceIp[0], deviceIp[1], deviceIp[2], deviceIp[3],
              macStr,
              productName,
-             prevFirmware, firmware,
+             prevFirmware, vulnerabilityColor(isVulnerable), firmware,
              advisoryUrl);
 
     if (debugMode) {
@@ -1410,7 +1431,12 @@ void HoneypotLogging::sendModuleFirmwareChangeTrap(IPAddress deviceIp, const uin
 void HoneypotLogging::sendEthernetModuleFirmwareChangeTrap(IPAddress deviceIp, const uint8_t mac[6],
                                                            uint8_t slot, const char* productName,
                                                            const char* prevFirmware, const char* firmware,
-                                                           const char* advisoryUrl) {
+                                                           const char* advisoryUrl, const char* isVulnerable) {
+  // Suppress non-vulnerable firmware-change notifications unless enabled.
+  if (strcmp(isVulnerable, "NO") == 0 && !notifyNotVulnerable) {
+    return;
+  }
+
   char eventTimeStr[32];
   const char* timeStr = ntpClient->formattedTime("%Y-%m-%dT%H:%M:%SZ");
   strncpy(eventTimeStr, timeStr, sizeof(eventTimeStr) - 1);
@@ -1419,7 +1445,11 @@ void HoneypotLogging::sendEthernetModuleFirmwareChangeTrap(IPAddress deviceIp, c
   // SMTP mode: send HTML email notification
   if (useSMTP) {
     char subject[128];
-    snprintf(subject, sizeof(subject), "[%s Notice] PLC Ethernet module firmware changed", (const char*)hostname);
+    if (strcmp(isVulnerable, "YES") == 0) {
+      snprintf(subject, sizeof(subject), "[%s ALERT] PLC Ethernet module firmware changed", (const char*)hostname);
+    } else {
+      snprintf(subject, sizeof(subject), "[%s Notice] PLC Ethernet module firmware changed", (const char*)hostname);
+    }
 
     char macStr[18];
     snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
@@ -1437,7 +1467,7 @@ void HoneypotLogging::sendEthernetModuleFirmwareChangeTrap(IPAddress deviceIp, c
              "<tr><td><b>MAC:</b></td><td>%s</td></tr>"
              "<tr><td><b>Slot:</b></td><td>%u</td></tr>"
              "<tr><td><b>Module:</b></td><td>%s</td></tr>"
-             "<tr><td><b>Firmware:</b></td><td>%s -&gt; %s</td></tr>"
+             "<tr><td><b>Firmware:</b></td><td>%s -&gt; <b style=\"color:%s\">%s</b></td></tr>"
              "</table>"
              "<p><a href=\"%s\">Advisory CVE search</a></p>"
              "</body></html>",
@@ -1447,7 +1477,7 @@ void HoneypotLogging::sendEthernetModuleFirmwareChangeTrap(IPAddress deviceIp, c
              macStr,
              (unsigned)slot,
              productName,
-             prevFirmware, firmware,
+             prevFirmware, vulnerabilityColor(isVulnerable), firmware,
              advisoryUrl);
 
     if (debugMode) {
@@ -1472,7 +1502,7 @@ void HoneypotLogging::sendInternetDetectedTrap(IPAddress gatewayIp, IPAddress dh
   // SMTP mode: send email notification instead
   if (useSMTP) {
     char subject[128];
-    snprintf(subject, sizeof(subject), "[%s Alert] PLC LAN direct Internet access detected!", (const char*)hostname);
+    snprintf(subject, sizeof(subject), "[%s ALERT] PLC LAN direct Internet access detected!", (const char*)hostname);
 
     char body[640];
     int len = snprintf(body, sizeof(body),
@@ -1561,7 +1591,7 @@ void HoneypotLogging::sendRogueDhcpTrap(IPAddress dhcpServerIp, IPAddress advert
   // SMTP mode: send email notification instead
   if (useSMTP) {
     char subject[128];
-    snprintf(subject, sizeof(subject), "[%s Alert] Rogue DHCP server detected", (const char*)hostname);
+    snprintf(subject, sizeof(subject), "[%s ALERT] Rogue DHCP server detected", (const char*)hostname);
 
     char body[512];
     snprintf(body, sizeof(body),

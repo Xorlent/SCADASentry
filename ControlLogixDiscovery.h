@@ -52,6 +52,7 @@ struct ClxPlcInfo {
     String    hostname;           // TCP/IP host name (TCP/IP Interface object 0xF5 attr 6)
     String    programName;       // controller program name (Program Name object 0x64)
     String    productName;        // CPU product name (slot 0)
+    uint16_t  vendorId;           // CIP vendor ID (e.g. 1 = Rockwell Automation)
     String    keyswitch;          // "RUN", "REMOTE RUN", "PROG", "REMOTE PROG", "UNKNOWN"
     bool      isRun;              // true when the keyswitch is in RUN or REMOTE RUN
     uint8_t   cpuMajorRevision;
@@ -86,11 +87,12 @@ private:
     void unregisterSession();
 
     // Read the Identity object (class 0x01, instance 1) of the module in `slot`
-    // via a backplane route. `statusWord`, `deviceType` and `serialNumber` are
-    // optional; pass nullptr to skip them.
+    // via a backplane route. `statusWord`, `deviceType`, `serialNumber` and
+    // `vendorId` are optional; pass nullptr to skip them.
     bool readIdentity(uint8_t slot, String& productName, uint8_t& major, uint8_t& minor,
                       uint16_t* statusWord = nullptr, uint16_t* deviceType = nullptr,
-                      uint32_t timeoutMs = 2000, uint32_t* serialNumber = nullptr);
+                      uint32_t timeoutMs = 2000, uint32_t* serialNumber = nullptr,
+                      uint16_t* vendorId = nullptr);
 
     // Read the Identity object of the device directly answering this TCP
     // connection (direct addressing, no backplane route or Connection Manager
@@ -98,14 +100,15 @@ private:
     // the IP we connected to.
     bool readIdentityDirect(String& productName, uint8_t& major, uint8_t& minor,
                             uint16_t* statusWord = nullptr, uint16_t* deviceType = nullptr,
-                            uint32_t timeoutMs = 2000, uint32_t* serialNumber = nullptr);
+                            uint32_t timeoutMs = 2000, uint32_t* serialNumber = nullptr,
+                            uint16_t* vendorId = nullptr);
 
     // Shared implementation of readIdentity()/readIdentityDirect(). When `direct`
     // is true the request is sent with no route path; otherwise it is routed
     // through the backplane to `slot`.
     bool readIdentityImpl(bool direct, uint8_t slot, String& productName, uint8_t& major,
                           uint8_t& minor, uint16_t* statusWord, uint16_t* deviceType,
-                          uint32_t* serialNumber, uint32_t timeoutMs);
+                          uint32_t* serialNumber, uint32_t timeoutMs, uint16_t* vendorId);
 
     // Read the Host Name (TCP/IP Interface object 0xF5, instance 1, attribute 6).
     bool readHostname(String& hostname, uint32_t timeoutMs);

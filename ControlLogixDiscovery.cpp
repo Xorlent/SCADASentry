@@ -355,7 +355,7 @@ bool ControlLogixDiscovery::readIdentityImpl(bool direct, uint8_t slot,
                                              String& productName, uint8_t& major,
                                              uint8_t& minor, uint16_t* statusWord,
                                              uint16_t* deviceType, uint32_t* serialNumber,
-                                             uint32_t timeoutMs) {
+                                             uint32_t timeoutMs, uint16_t* vendorId) {
     // Primary attempt: Get Attributes All (full Identity object). This is the
     // normal path for CPUs and modern comm modules and is left unchanged.
     {
@@ -381,7 +381,8 @@ bool ControlLogixDiscovery::readIdentityImpl(bool direct, uint8_t slot,
                 const uint8_t* d = resp + 4;   // skip service, reserved, status, addl size
                 uint16_t avail = respLen - 4;
                 if (avail >= 15) {  // need fixed fields + name length byte
-                    // vendor(2) at d+0 and product code(2) at d+4 are not needed; skip them.
+                    if (vendorId) *vendorId = getU16(d + 0);
+                    // product code(2) at d+4 is not needed; skip it.
                     if (deviceType) *deviceType = getU16(d + 2);
                     major              = d[6];
                     minor              = d[7];
@@ -480,23 +481,31 @@ bool ControlLogixDiscovery::readIdentityImpl(bool direct, uint8_t slot,
         }
     }
 
+    // Attribute 1 (Vendor ID): UINT (best-effort).
+    if (vendorId) {
+        *vendorId = 0;
+        if (getSingle(0x01, buf, bufLen) && bufLen >= 6) {
+            *vendorId = getU16(buf + 4);
+        }
+    }
+
     return true;
 }
 
 bool ControlLogixDiscovery::readIdentity(uint8_t slot, String& productName, uint8_t& major,
                                          uint8_t& minor, uint16_t* statusWord,
                                          uint16_t* deviceType, uint32_t timeoutMs,
-                                         uint32_t* serialNumber) {
+                                         uint32_t* serialNumber, uint16_t* vendorId) {
     return readIdentityImpl(false, slot, productName, major, minor, statusWord, deviceType,
-                            serialNumber, timeoutMs);
+                            serialNumber, timeoutMs, vendorId);
 }
 
 bool ControlLogixDiscovery::readIdentityDirect(String& productName, uint8_t& major,
                                                uint8_t& minor, uint16_t* statusWord,
                                                uint16_t* deviceType, uint32_t timeoutMs,
-                                               uint32_t* serialNumber) {
+                                               uint32_t* serialNumber, uint16_t* vendorId) {
     return readIdentityImpl(true, 0, productName, major, minor, statusWord, deviceType,
-                            serialNumber, timeoutMs);
+                            serialNumber, timeoutMs, vendorId);
 }
 
 // ---------------------------------------------------------------------------
@@ -575,7 +584,8 @@ bool ControlLogixDiscovery::getPlcInfo(const IPAddress& ip, ClxPlcInfo& info,
     uint16_t statusWord = 0;
     uint16_t slot0Type = 0;
     uint32_t cpuSerial = 0;
-    if (!readIdentity(0, cpuName, major, minor, &statusWord, &slot0Type, timeoutMs, &cpuSerial)) {
+    uint16_t cpuVendor = 0;
+    if (!readIdentity(0, cpuName, major, minor, &statusWord, &slot0Type, timeoutMs, &cpuSerial, &cpuVendor)) {
         unregisterSession();
         _client.stop();
         return false;
@@ -583,6 +593,7 @@ bool ControlLogixDiscovery::getPlcInfo(const IPAddress& ip, ClxPlcInfo& info,
     info.serialNumber = cpuSerial;
 
     info.productName       = cpuName;
+    info.vendorId          = cpuVendor;
     info.cpuMajorRevision  = major;
     info.cpuMinorRevision  = minor;
 

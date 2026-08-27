@@ -2,7 +2,7 @@
  * LanScanner.h
  * 
  * LAN device discovery scanner for SCADASentry.
- * Periodically pings the local subnet, probes port 44818/TCP for
+ * Periodically ARP-probes the local subnet, probes port 44818/TCP for
  * ControlLogix devices, queries their identity/status, and reports
  * devices via SNMP traps through HoneypotLogging.
  *
@@ -31,6 +31,7 @@ struct DeviceModule {
   bool     isRun;          // run key status (CPU only; false for Ethernet)
   uint8_t  majorRevision;  // firmware major revision
   uint8_t  minorRevision;  // firmware minor revision
+  char     isVulnerable[4];// "YES"/"NO"/"N/A" from firmware vulnerability lookup
 };
 
 // A discovered LAN device
@@ -56,7 +57,7 @@ struct DeviceEntry {
   bool hasStatus;       // has status been queried at least once?
   // Timing (microseconds since boot via esp_timer_get_time(); int64_t so it
   // never wraps in practice)
-  int64_t lastSeen;    // last successful ping
+  int64_t lastSeen;    // last successful ARP probe
   int64_t lastStatusCheck; // last status query
 };
 
@@ -85,6 +86,7 @@ private:
 
   uint32_t scanCount;
   volatile bool resetRequested;   // set by requestReset(); applied at start of runScan()
+  bool isDNSAvailable;            // configured DNS server reachable (set each status check)
 
   // EtherNet/IP discovery client (ListIdentity broadcast + CIP reads)
   ControlLogixDiscovery clx;
@@ -92,11 +94,12 @@ private:
   // Helpers
   bool isExcluded(IPAddress ip);
   int findDevice(IPAddress ip);
-  bool pingHost(IPAddress ip, uint32_t timeoutMs);
+  bool arpProbe(IPAddress ip, uint32_t timeoutMs);
   bool getMac(IPAddress ip, uint8_t mac[6]);
   void populatePlc(DeviceEntry& dev, const ClxDiscoveryResult& d);
-  void queryPlcMode(DeviceEntry& dev);
+  bool queryPlcMode(DeviceEntry& dev);
   void checkStatus(DeviceEntry& dev, bool doExpansionCheck);
+  void setModuleVulnerability(DeviceModule* modules, uint8_t count);
   void addDevice(const DeviceEntry& dev);
   void removeDevice(int index);
 };

@@ -82,6 +82,7 @@ struct DeviceModuleEmailInfo {
   uint8_t majorRevision;
   uint8_t minorRevision;
   const char* advisoryUrl;
+  const char* isVulnerable;   // "YES"/"NO"/"N/A"
 };
 
 // SNMP trap OID constants are defined in HoneypotLogging.cpp
@@ -214,11 +215,11 @@ public:
   void sendDeviceFirmwareChangeTrap(IPAddress deviceIp, const uint8_t mac[6],
                                     const char* productName,
                                     const char* prevFirmware, const char* firmware,
-                                    const char* advisoryUrl);
+                                    const char* advisoryUrl, const char* isVulnerable);
   void sendEthernetModuleFirmwareChangeTrap(IPAddress deviceIp, const uint8_t mac[6],
                                             uint8_t slot, const char* productName,
                                             const char* prevFirmware, const char* firmware,
-                                            const char* advisoryUrl);
+                                            const char* advisoryUrl, const char* isVulnerable);
 
   // Internet detection notification (called from the Internet detection task)
   void sendInternetDetectedTrap(IPAddress gatewayIp, IPAddress dhcpServerIp,

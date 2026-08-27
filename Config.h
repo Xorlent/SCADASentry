@@ -42,6 +42,18 @@ const bool DEBUG = true;
     const IPAddress dns1(9, 9, 9, 9);            // Primary DNS
     const IPAddress dns2(149, 112, 112, 112);    // Secondary DNS
 
+    // DNS search suffix for firmware vulnerability lookups. The module catalog
+    // name (e.g. "EN2T-B") is prepended to this suffix to form the TXT record
+    // name queried from the DNS servers above (e.g. "EN2T-B.vuln.example.com").
+    // Do not include a leading dot. Leave empty to disable vulnerability lookups.
+    const char* const vulnSearchSuffix = "vuln.plc.local";
+
+    // Whether to send firmware-change notifications for modules that are NOT
+    // vulnerable (isVulnerable = "NO"). When false (default), firmware-change
+    // emails/traps are suppressed for non-vulnerable modules; vulnerable ("YES")
+    // and unknown ("N/A") modules are always reported.
+    const bool notifyNotVulnerable = false;
+
     // Logging method configuration:
     // Choose logging method: true = SMTP relay, false = SNMP trap
     const bool USE_SMTP = false;
@@ -181,7 +193,7 @@ const bool DEBUG = true;
 
     // Detects Internet access on the local LAN.
     // Internet access is identified by (1) a DHCP server responding on the segment
-    // (which should not exist on a PLC LAN) and (2) Internet reachability
+    // (which generally should not exist on a PLC LAN) and (2) Internet reachability
     // through the gateway. Reports via the internetDetectedTrap SNMP trap.
     // A DHCP server that advertises a gateway outside this device's configured
     // subnet is treated as rogue and reported via the rogueDhcpServerTrap.

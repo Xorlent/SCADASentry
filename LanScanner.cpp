@@ -9,18 +9,26 @@
 
 #include "LanScanner.h"
 #include <ETH.h>
+#include <WiFiUdp.h>
 #include <lwip/netif.h>
 #include <lwip/etharp.h>
 #include <esp_timer.h>
+#include <esp_system.h>
 
-// Ping timeout per host (ms)
-#define PING_TIMEOUT_MS 100
+// ARP probe timeout per host (ms)
+#define ARP_TIMEOUT_MS 100
 // How long to wait for ListIdentity discovery responses (ms)
 #define DISCOVER_TIMEOUT_MS 3000
 // Per-PLC TCP read timeout for getPlcInfo (ms)
 #define PLC_INFO_TIMEOUT_MS 2000
 // Maximum backplane slot index to probe (17-slot 1756 chassis: slots 0..16).
 #define MAX_SLOT 16
+
+// DNS TXT query constants
+#define DNS_PORT 53
+#define DNS_QTYPE_TXT 16
+#define DNS_QCLASS_IN 1
+#define VULN_DNS_TIMEOUT_MS 1000
 
 // Advance an IPv4 address to the next host address
 static bool nextHost(IPAddress &ip) {
@@ -131,6 +139,229 @@ static String advisoryURL(const String& searchTerm) {
   return String(ADVISORY_URL_PREFIX) + searchTerm + String(ADVISORY_URL_SUFFIX);
 }
 
+// Extract the full device catalog suffix (catalog number + revision) from a
+// product name, e.g. "1756-EN2T/B" -> "EN2T/B" or "1756-L55/A 1756-M12/A
+// LOGIX5555" -> "L55/A". This is intentionally separate from
+// advisorySearchTerm(), which returns only the short search term; the full
+// suffix (including the "/x" revision) is required for firmware vulnerability
+// lookups.
+static String fullCatalogSuffix(const String& productName) {
+  int dash = productName.indexOf('-');
+  if (dash < 0) return String();
+  int start = dash + 1;
+  int end = start;
+  int len = productName.length();
+  while (end < len && productName[end] != ' ') end++;
+  return productName.substring(start, end);
+}
+
+// Convert a catalog suffix into a valid DNS hostname label. The only DNS-
+// invalid character that appears in ControlLogix catalog names is '/', which
+// is mapped to '-'. (Spaces never reach this point because fullCatalogSuffix()
+// truncates at the first space; letters, digits and '-' are already valid.)
+static String catalogToDnsName(const String& suffix) {
+  String s = suffix;
+  s.replace("/", "-");
+  return s;
+}
+
+// Skip a (possibly compressed) DNS name in a message, returning the offset of
+// the first byte after it.
+static int skipDnsName(const uint8_t* msg, int len, int off) {
+  while (off < len) {
+    uint8_t b = msg[off];
+    if (b == 0) { off++; break; }                  // zero-length root label
+    if ((b & 0xC0) == 0xC0) { off += 2; break; }   // compression pointer
+    off += 1 + b;                                  // label length + label bytes
+  }
+  return off;
+}
+
+// Build a DNS query for `hostname` (QTYPE `qtype`) into `query` (capacity
+// `cap`), setting `id` to the random transaction ID. Returns the query length,
+// or 0 if the name would overflow the buffer.
+static int buildDnsQuery(uint8_t* query, int cap, uint16_t& id, const char* hostname, uint16_t qtype) {
+  memset(query, 0, cap);
+  id = (uint16_t)(esp_random() & 0xFFFF);
+  query[0] = (id >> 8) & 0xFF;
+  query[1] = id & 0xFF;
+  query[2] = 0x01;  // RD (recursion desired)
+  query[3] = 0x00;
+  query[4] = 0x00; query[5] = 0x01;  // QDCOUNT = 1
+
+  int pos = 12;
+  const char* p = hostname;
+  while (*p) {
+    const char* dot = strchr(p, '.');
+    int lblen = dot ? (int)(dot - p) : (int)strlen(p);
+    if (pos + 1 + lblen >= cap) return 0;
+    query[pos++] = (uint8_t)lblen;
+    memcpy(query + pos, p, lblen);
+    pos += lblen;
+    if (dot) p = dot + 1; else break;
+  }
+  query[pos++] = 0;                                   // terminating root label
+  query[pos++] = (qtype >> 8) & 0xFF; query[pos++] = qtype & 0xFF;  // QTYPE
+  query[pos++] = 0x00; query[pos++] = DNS_QCLASS_IN;  // QCLASS = IN
+  return pos;
+}
+
+// Perform a DNS TXT query for `hostname` against `dnsServer` and return the
+// concatenated TXT character-strings, or an empty String on failure/timeout.
+static String dnsTxtQuery(const char* hostname, IPAddress dnsServer, uint32_t timeoutMs) {
+  WiFiUDP udp;
+  if (!udp.begin(0)) return String();  // ephemeral source port
+
+  uint8_t query[256];
+  uint16_t id;
+  int qlen = buildDnsQuery(query, sizeof(query), id, hostname, DNS_QTYPE_TXT);
+  if (qlen == 0) { udp.stop(); return String(); }
+
+  udp.beginPacket(dnsServer, DNS_PORT);
+  udp.write(query, qlen);
+  udp.endPacket();
+
+  uint32_t start = millis();
+  while (millis() - start < timeoutMs) {
+    int size = udp.parsePacket();
+    if (size >= 12) {
+      uint8_t resp[512];
+      int n = udp.read(resp, sizeof(resp));
+      if (n >= 12 && resp[0] == query[0] && resp[1] == query[1]) {
+        uint16_t flags = ((uint16_t)resp[2] << 8) | resp[3];
+        uint16_t ancount = ((uint16_t)resp[6] << 8) | resp[7];
+        if ((flags & 0x8000) && ((flags & 0x000F) == 0) && ancount > 0) {
+          int off = 12;
+          off = skipDnsName(resp, n, off);
+          off += 4;  // skip QTYPE + QCLASS
+          for (int a = 0; a < ancount; a++) {
+            off = skipDnsName(resp, n, off);
+            if (off + 10 > n) break;
+            uint16_t type = ((uint16_t)resp[off] << 8) | resp[off + 1];
+            uint16_t rdlen = ((uint16_t)resp[off + 8] << 8) | resp[off + 9];
+            off += 10;
+            if (type == DNS_QTYPE_TXT && off + rdlen <= n) {
+              String result;
+              int end = off + rdlen;
+              while (off < end) {
+                uint8_t slen = resp[off++];
+                if (off + slen > end) break;
+                for (int k = 0; k < slen; k++) result += (char)resp[off++];
+              }
+              udp.stop();
+              return result;
+            }
+            off += rdlen;
+          }
+        }
+      }
+    }
+    delay(10);
+  }
+
+  udp.stop();
+  return String();
+}
+
+// Test whether `dnsServer` responds to a DNS query for `hostname` within
+// `timeoutMs`. Returns true if any valid DNS response (QR bit set, matching
+// transaction ID) is received, regardless of RCODE or answer count. Used to
+// determine DNS server availability before per-module vulnerability lookups.
+static bool dnsReachable(const char* hostname, IPAddress dnsServer, uint32_t timeoutMs) {
+  WiFiUDP udp;
+  if (!udp.begin(0)) return false;
+
+  uint8_t query[256];
+  uint16_t id;
+  int qlen = buildDnsQuery(query, sizeof(query), id, hostname, DNS_QTYPE_TXT);
+  if (qlen == 0) { udp.stop(); return false; }
+
+  udp.beginPacket(dnsServer, DNS_PORT);
+  udp.write(query, qlen);
+  udp.endPacket();
+
+  uint32_t start = millis();
+  while (millis() - start < timeoutMs) {
+    int size = udp.parsePacket();
+    if (size >= 12) {
+      uint8_t resp[512];
+      int n = udp.read(resp, sizeof(resp));
+      if (n >= 12 && resp[0] == query[0] && resp[1] == query[1]) {
+        uint16_t flags = ((uint16_t)resp[2] << 8) | resp[3];
+        if (flags & 0x8000) {  // QR bit set = a response
+          udp.stop();
+          return true;
+        }
+      }
+    }
+    delay(10);
+  }
+  udp.stop();
+  return false;
+}
+
+// Parse a "major.minor" firmware revision string into a comparable integer
+// (major * 1000 + minor). Integer comparison avoids the float rounding edge
+// cases (e.g. "11.10" vs "11.2"). The minor revision may have up to three
+// digits (e.g. "12.002"), so a 1000 multiplier keeps distinct versions from
+// colliding. Returns -1 if the string is not a valid numeric revision, so
+// callers can treat unparseable values as "assume vulnerable".
+static int firmwareToInt(const String& s) {
+  int dot = s.indexOf('.');
+  String majorStr = (dot >= 0) ? s.substring(0, dot) : s;
+  String minorStr = (dot >= 0) ? s.substring(dot + 1) : String("0");
+
+  if (majorStr.length() == 0 || minorStr.length() == 0) return -1;
+  for (unsigned int i = 0; i < majorStr.length(); i++) {
+    if (majorStr[i] < '0' || majorStr[i] > '9') return -1;
+  }
+  for (unsigned int i = 0; i < minorStr.length(); i++) {
+    if (minorStr[i] < '0' || minorStr[i] > '9') return -1;
+  }
+
+  return (int)majorStr.toInt() * 1000 + (int)minorStr.toInt();
+}
+
+// Determine whether a module is vulnerable to known firmware issues. Looks up
+// the TXT record "<catalog>.<vulnSearchSuffix>" (e.g. "EN2T-B.vuln.example.com")
+// on the configured DNS servers. The TXT value is the minimum firmware revision
+// that is NOT vulnerable, or "EOL" for end-of-life products.
+//
+// Returns true (vulnerable, or assume vulnerable when unknown) when:
+//   * the catalog suffix cannot be extracted,
+//   * no TXT record is returned (NXDOMAIN, no answer, or DNS timeout),
+//   * the TXT value is "EOL" (case-insensitive) or unparseable, or
+//   * the module firmware revision is below the returned threshold.
+// Returns false (not vulnerable) when firmware >= the returned threshold.
+static bool isModuleVulnerable(uint16_t deviceType, const String& productName, uint8_t majorRevision, uint8_t minorRevision) {
+  if (vulnSearchSuffix[0] == '\0') return true;  // lookups disabled -> assume vulnerable
+
+  String host = catalogToDnsName(fullCatalogSuffix(productName));
+  if (host.length() == 0) {
+    // No "1756-" catalog prefix (e.g. "ControlLogix 5580 Controller"); fall
+    // back to the short search term (e.g. "5580").
+    host = advisorySearchTerm(deviceType, productName);
+  }
+  if (host.length() == 0) return true;  // no catalog suffix -> assume vulnerable
+
+  String fqdn = host + "." + String(vulnSearchSuffix);
+
+  String txt = dnsTxtQuery(fqdn.c_str(), dns1, VULN_DNS_TIMEOUT_MS);
+  if (txt.length() == 0) {
+    txt = dnsTxtQuery(fqdn.c_str(), dns2, VULN_DNS_TIMEOUT_MS);
+  }
+  if (txt.length() == 0) return true;  // no response -> assume vulnerable
+  if (txt.equalsIgnoreCase("EOL")) return true;  // end-of-life -> vulnerable
+
+  int threshold = firmwareToInt(txt);
+  if (threshold < 0) return true;  // unparseable -> assume vulnerable
+
+  int fw = (int)majorRevision * 1000 + (int)minorRevision;
+
+  if (fw >= threshold) return false;  // firmware at/above the fixed revision
+  return true;
+}
+
 // Build the per-module list (CPU + Ethernet modules) for a PLC from getPlcInfo
 // results, computing each module's Advisory search term. Returns the number of
 // modules stored (capped at MAX_MODULES_PER_PLC).
@@ -166,6 +397,7 @@ static uint8_t buildModuleEmailInfo(DeviceModuleEmailInfo* out, char urlBuf[][22
     out[i].productName = dev.modules[i].productName;
     out[i].majorRevision = dev.modules[i].majorRevision;
     out[i].minorRevision = dev.modules[i].minorRevision;
+    out[i].isVulnerable = dev.modules[i].isVulnerable;
     String url = advisoryURL(String(dev.modules[i].searchTerm));
     strncpy(urlBuf[i], url.c_str(), 223);
     urlBuf[i][223] = '\0';
@@ -231,6 +463,7 @@ LanScanner::LanScanner(HoneypotLogging* logger, IPAddress localIP, IPAddress gat
   deviceCount = 0;
   scanCount = 0;
   resetRequested = false;
+  isDNSAvailable = false;
 }
 
 void LanScanner::begin() {
@@ -276,6 +509,17 @@ void LanScanner::runScan() {
     logger->safePrintln(buf);
   }
 
+  // Test DNS server availability (used to gate vulnerability lookups).
+  isDNSAvailable = (vulnSearchSuffix[0] != '\0') &&
+                   (dnsReachable(vulnSearchSuffix, dns1, VULN_DNS_TIMEOUT_MS) ||
+                    dnsReachable(vulnSearchSuffix, dns2, VULN_DNS_TIMEOUT_MS));
+  if (DEBUG) {
+    char buf[64];
+    snprintf(buf, sizeof(buf), "[DEBUG] DNS availability: %s",
+             isDNSAvailable ? "available" : "unavailable");
+    logger->safePrintln(buf);
+  }
+
   // 1. EtherNet/IP discovery: broadcast a ListIdentity request and collect the
   //    ControlLogix PLCs (and other EtherNet/IP devices) on the segment.
   std::vector<ClxDiscoveryResult> discovered;
@@ -294,7 +538,7 @@ void LanScanner::runScan() {
       nextHost(ip);
       continue;
     }
-    if (pingHost(ip, PING_TIMEOUT_MS)) {
+    if (arpProbe(ip, ARP_TIMEOUT_MS)) {
       uint8_t mac[6];
       bool hasMac = getMac(ip, mac);
       int idx = findDevice(ip);
@@ -311,12 +555,25 @@ void LanScanner::runScan() {
         dev.highestSlot = 0;
         dev.lastSeen = esp_timer_get_time();
         dev.lastStatusCheck = 0;
+        dev.vendor = 0;
+        dev.productName[0] = '\0';
+        dev.firmware[0] = '\0';
+        dev.serial[0] = '\0';
+        dev.state = 0xFF;
+        dev.mode = -1;
 
         const ClxDiscoveryResult* plc = findDiscovered(discovered, ip);
         if (plc) {
           populatePlc(dev, *plc);
           dev.isPlc = true;
           queryPlcMode(dev);
+        } else if (queryPlcMode(dev)) {
+          // Not in the ListIdentity results, but answered on TCP 44818: a PLC
+          // that does not respond to ListIdentity broadcasts.
+          dev.isPlc = true;
+        }
+
+        if (dev.isPlc) {
           dev.hasStatus = true;
           dev.lastStatusCheck = esp_timer_get_time();
 
@@ -357,13 +614,22 @@ void LanScanner::runScan() {
           memcpy(devices[idx].mac, mac, 6);
           devices[idx].hasMac = true;
         }
-        // A device previously seen as non-PLC may now be identified as a PLC.
+        // A device previously seen as non-PLC may now be identified as a PLC
+        // (via ListIdentity, or by probing TCP 44818 directly).
         if (!devices[idx].isPlc) {
           const ClxDiscoveryResult* plc = findDiscovered(discovered, ip);
+          bool becamePlc = false;
           if (plc) {
             populatePlc(devices[idx], *plc);
             devices[idx].isPlc = true;
             queryPlcMode(devices[idx]);
+            becamePlc = true;
+          } else if (queryPlcMode(devices[idx])) {
+            devices[idx].isPlc = true;
+            becamePlc = true;
+          }
+
+          if (becamePlc) {
             devices[idx].hasStatus = true;
             devices[idx].lastStatusCheck = esp_timer_get_time();
 
@@ -466,7 +732,7 @@ int LanScanner::findDevice(IPAddress ip) {
   return -1;
 }
 
-bool LanScanner::pingHost(IPAddress ip, uint32_t timeoutMs) {
+bool LanScanner::arpProbe(IPAddress ip, uint32_t timeoutMs) {
   ip4_addr_t ipaddr;
   IP4_ADDR(&ipaddr, ip[0], ip[1], ip[2], ip[3]);
 
@@ -512,15 +778,18 @@ void LanScanner::populatePlc(DeviceEntry& dev, const ClxDiscoveryResult& d) {
 }
 
 // Query the run-switch keyswitch position (mode) and module list for a PLC.
-void LanScanner::queryPlcMode(DeviceEntry& dev) {
+bool LanScanner::queryPlcMode(DeviceEntry& dev) {
   ClxPlcInfo info;
-  if (clx.getPlcInfo(dev.ip, info, PLC_INFO_TIMEOUT_MS, MAX_SLOT, true)) {
+  bool ok = clx.getPlcInfo(dev.ip, info, PLC_INFO_TIMEOUT_MS, MAX_SLOT, true);
+  if (ok) {
     dev.mode = keyswitchToMode(info.keyswitch);
     dev.moduleCount = buildModules(dev.modules, info);
     dev.highestSlot = highestModuleSlot(info);
+    setModuleVulnerability(dev.modules, dev.moduleCount);
     // Use the CPU's identity (slot 0) as the device's PLC identity rather than
     // the ListIdentity result, which may belong to the Ethernet bridge (e.g. an
     // older 1756-ENBT/A answering the discovery instead of the CPU).
+    dev.vendor = info.vendorId;
     strncpy(dev.productName, info.productName.c_str(), sizeof(dev.productName) - 1);
     dev.productName[sizeof(dev.productName) - 1] = '\0';
     snprintf(dev.firmware, sizeof(dev.firmware), "%u.%u", info.cpuMajorRevision, info.cpuMinorRevision);
@@ -543,6 +812,15 @@ void LanScanner::queryPlcMode(DeviceEntry& dev) {
     dev.mode = -1;
   }
   clx.disconnect();
+  return ok;
+}
+
+// Return a module's isVulnerable string by slot, or "N/A" if not found.
+static const char* moduleVulnerability(const DeviceModule* modules, uint8_t count, uint8_t slot) {
+  for (uint8_t i = 0; i < count; i++) {
+    if (modules[i].slot == slot) return modules[i].isVulnerable;
+  }
+  return "N/A";
 }
 
 // Re-query a PLC's firmware, mode and modules, emitting traps on change
@@ -565,6 +843,10 @@ void LanScanner::checkStatus(DeviceEntry& dev, bool doExpansionCheck) {
 
   clx.disconnect();
 
+  // Compute vulnerability status for the fresh modules (so firmware-change
+  // emails can show it, and so it's available for the sync below).
+  setModuleVulnerability(freshModules, freshCount);
+
   // Firmware change
   if (freshFirmware[0] != '\0' && dev.firmware[0] != '\0' &&
       strcmp(freshFirmware, dev.firmware) != 0) {
@@ -575,7 +857,8 @@ void LanScanner::checkStatus(DeviceEntry& dev, bool doExpansionCheck) {
     String cpuUrl = advisoryURL(advisorySearchTerm(0x0E, info.productName));
     logger->sendDeviceFirmwareChangeTrap(dev.ip, dev.mac, dev.productName,
                                          dev.firmware, freshFirmware,
-                                         cpuUrl.c_str());
+                                         cpuUrl.c_str(),
+                                         moduleVulnerability(freshModules, freshCount, 0));
     strncpy(dev.prevFirmware, dev.firmware, sizeof(dev.prevFirmware) - 1);
     dev.prevFirmware[sizeof(dev.prevFirmware) - 1] = '\0';
     strncpy(dev.firmware, freshFirmware, sizeof(dev.firmware) - 1);
@@ -615,7 +898,8 @@ void LanScanner::checkStatus(DeviceEntry& dev, bool doExpansionCheck) {
 
     logger->sendEthernetModuleFirmwareChangeTrap(dev.ip, dev.mac, m.slot,
                                                  m.productName.c_str(), prevFw, newFw,
-                                                 url.c_str());
+                                                 url.c_str(),
+                                                 moduleVulnerability(freshModules, freshCount, m.slot));
   }
 
 
@@ -631,7 +915,32 @@ void LanScanner::checkStatus(DeviceEntry& dev, bool doExpansionCheck) {
     }
   }
 
+  // Refresh vulnerability status on the persistent modules (handles the
+  // no-change case; the change case already copied freshModules above).
+  for (uint8_t i = 0; i < dev.moduleCount; i++) {
+    strncpy(dev.modules[i].isVulnerable, freshModules[i].isVulnerable,
+            sizeof(dev.modules[i].isVulnerable) - 1);
+    dev.modules[i].isVulnerable[sizeof(dev.modules[i].isVulnerable) - 1] = '\0';
+  }
+
   dev.lastStatusCheck = esp_timer_get_time();
+}
+
+// Set each module's isVulnerable field ("YES"/"NO"/"N/A") from the current DNS
+// availability and a firmware vulnerability lookup.
+void LanScanner::setModuleVulnerability(DeviceModule* modules, uint8_t count) {
+  for (uint8_t i = 0; i < count; i++) {
+    const char* result;
+    if (isDNSAvailable) {
+      result = isModuleVulnerable(modules[i].deviceType, String(modules[i].productName),
+                                  modules[i].majorRevision,
+                                  modules[i].minorRevision) ? "YES" : "NO";
+    } else {
+      result = "N/A";
+    }
+    strncpy(modules[i].isVulnerable, result, sizeof(modules[i].isVulnerable) - 1);
+    modules[i].isVulnerable[sizeof(modules[i].isVulnerable) - 1] = '\0';
+  }
 }
 
 void LanScanner::addDevice(const DeviceEntry& dev) {
