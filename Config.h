@@ -39,8 +39,8 @@ const bool DEBUG = true;
     const IPAddress ip(192, 168, 1, 50);        // Set device IP address.
     const IPAddress gateway(192, 168, 1, 1);    // Set default gateway IP address.
     const IPAddress subnet(255, 255, 255, 0);    // Set network subnet mask.
-    const IPAddress dns1(9, 9, 9, 9);            // Primary DNS
-    const IPAddress dns2(149, 112, 112, 112);    // Secondary DNS
+    const IPAddress dns1(192, 168, 1, 5);            // Primary DNS
+    const IPAddress dns2(192, 168, 1, 6);    // Secondary DNS
 
     // DNS search suffix for firmware vulnerability lookups. The module catalog
     // name (e.g. "EN2T-B") is prepended to this suffix to form the TXT record

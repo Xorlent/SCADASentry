@@ -208,7 +208,7 @@ static int buildDnsQuery(uint8_t* query, int cap, uint16_t& id, const char* host
 
 // Perform a DNS TXT query for `hostname` against `dnsServer` and return the
 // concatenated TXT character-strings, or an empty String on failure/timeout.
-static String dnsTxtQuery(const char* hostname, IPAddress dnsServer, uint32_t timeoutMs) {
+static String dnsTxtQuery(HoneypotLogging* logger, const char* hostname, IPAddress dnsServer, uint32_t timeoutMs) {
   WiFiUDP udp;
   if (!udp.begin(0)) return String();  // ephemeral source port
 
@@ -220,6 +220,13 @@ static String dnsTxtQuery(const char* hostname, IPAddress dnsServer, uint32_t ti
   udp.beginPacket(dnsServer, DNS_PORT);
   udp.write(query, qlen);
   udp.endPacket();
+
+  if (DEBUG) {
+    char dbg[128];
+    snprintf(dbg, sizeof(dbg), "[DEBUG] DNS TXT query: %s via %d.%d.%d.%d",
+             hostname, dnsServer[0], dnsServer[1], dnsServer[2], dnsServer[3]);
+    logger->safePrintln(dbg);
+  }
 
   uint32_t start = millis();
   while (millis() - start < timeoutMs) {
@@ -249,6 +256,13 @@ static String dnsTxtQuery(const char* hostname, IPAddress dnsServer, uint32_t ti
                 for (int k = 0; k < slen; k++) result += (char)resp[off++];
               }
               udp.stop();
+              if (DEBUG) {
+                char dbg[160];
+                snprintf(dbg, sizeof(dbg), "[DEBUG] DNS TXT result: %s -> \"%s\" from %d.%d.%d.%d",
+                         hostname, result.c_str(),
+                         dnsServer[0], dnsServer[1], dnsServer[2], dnsServer[3]);
+                logger->safePrintln(dbg);
+              }
               return result;
             }
             off += rdlen;
@@ -260,6 +274,12 @@ static String dnsTxtQuery(const char* hostname, IPAddress dnsServer, uint32_t ti
   }
 
   udp.stop();
+  if (DEBUG) {
+    char dbg[160];
+    snprintf(dbg, sizeof(dbg), "[DEBUG] DNS TXT query failed (no answer/timeout): %s via %d.%d.%d.%d",
+             hostname, dnsServer[0], dnsServer[1], dnsServer[2], dnsServer[3]);
+    logger->safePrintln(dbg);
+  }
   return String();
 }
 
@@ -333,8 +353,14 @@ static int firmwareToInt(const String& s) {
 //   * the TXT value is "EOL" (case-insensitive) or unparseable, or
 //   * the module firmware revision is below the returned threshold.
 // Returns false (not vulnerable) when firmware >= the returned threshold.
-static bool isModuleVulnerable(uint16_t deviceType, const String& productName, uint8_t majorRevision, uint8_t minorRevision) {
-  if (vulnSearchSuffix[0] == '\0') return true;  // lookups disabled -> assume vulnerable
+static bool isModuleVulnerable(HoneypotLogging* logger, uint16_t deviceType, const String& productName,
+                               uint8_t majorRevision, uint8_t minorRevision) {
+  if (vulnSearchSuffix[0] == '\0') {  // lookups disabled -> assume vulnerable
+    if (DEBUG) {
+      logger->safePrintln("[DEBUG] Vuln lookup: disabled (vulnSearchSuffix empty) -> assume vulnerable");
+    }
+    return true;
+  }
 
   String host = catalogToDnsName(fullCatalogSuffix(productName));
   if (host.length() == 0) {
@@ -342,24 +368,56 @@ static bool isModuleVulnerable(uint16_t deviceType, const String& productName, u
     // back to the short search term (e.g. "5580").
     host = advisorySearchTerm(deviceType, productName);
   }
-  if (host.length() == 0) return true;  // no catalog suffix -> assume vulnerable
+  if (host.length() == 0) {  // no catalog suffix -> assume vulnerable
+    if (DEBUG) {
+      char dbg[160];
+      snprintf(dbg, sizeof(dbg), "[DEBUG] Vuln lookup: no catalog suffix for \"%s\" -> assume vulnerable",
+               productName.c_str());
+      logger->safePrintln(dbg);
+    }
+    return true;
+  }
 
   String fqdn = host + "." + String(vulnSearchSuffix);
 
-  String txt = dnsTxtQuery(fqdn.c_str(), dns1, VULN_DNS_TIMEOUT_MS);
-  if (txt.length() == 0) {
-    txt = dnsTxtQuery(fqdn.c_str(), dns2, VULN_DNS_TIMEOUT_MS);
+  if (DEBUG) {
+    char dbg[192];
+    snprintf(dbg, sizeof(dbg), "[DEBUG] Vuln lookup: \"%s\" fw %u.%u -> query %s",
+             productName.c_str(), (unsigned)majorRevision, (unsigned)minorRevision, fqdn.c_str());
+    logger->safePrintln(dbg);
   }
-  if (txt.length() == 0) return true;  // no response -> assume vulnerable
-  if (txt.equalsIgnoreCase("EOL")) return true;  // end-of-life -> vulnerable
 
-  int threshold = firmwareToInt(txt);
-  if (threshold < 0) return true;  // unparseable -> assume vulnerable
+  String txt = dnsTxtQuery(logger, fqdn.c_str(), dns1, VULN_DNS_TIMEOUT_MS);
+  if (txt.length() == 0) {
+    if (DEBUG) {
+      logger->safePrintln("[DEBUG] Vuln lookup: dns1 no answer, trying dns2");
+    }
+    txt = dnsTxtQuery(logger, fqdn.c_str(), dns2, VULN_DNS_TIMEOUT_MS);
+  }
 
-  int fw = (int)majorRevision * 1000 + (int)minorRevision;
+  bool vulnerable;
+  if (txt.length() == 0) {                      // no response -> assume vulnerable
+    vulnerable = true;
+  } else if (txt.equalsIgnoreCase("EOL")) {     // end-of-life -> vulnerable
+    vulnerable = true;
+  } else {
+    int threshold = firmwareToInt(txt);
+    if (threshold < 0) {                        // unparseable -> assume vulnerable
+      vulnerable = true;
+    } else {
+      int fw = (int)majorRevision * 1000 + (int)minorRevision;
+      vulnerable = (fw < threshold);
+    }
+  }
 
-  if (fw >= threshold) return false;  // firmware at/above the fixed revision
-  return true;
+  if (DEBUG) {
+    char dbg[208];
+    snprintf(dbg, sizeof(dbg), "[DEBUG] Vuln lookup: %s -> TXT \"%s\" => %s",
+             fqdn.c_str(), txt.c_str(), vulnerable ? "VULNERABLE" : "not vulnerable");
+    logger->safePrintln(dbg);
+  }
+
+  return vulnerable;
 }
 
 // Build the per-module list (CPU + Ethernet modules) for a PLC from getPlcInfo
@@ -949,7 +1007,7 @@ void LanScanner::setModuleVulnerability(DeviceModule* modules, uint8_t count) {
   for (uint8_t i = 0; i < count; i++) {
     const char* result;
     if (isDNSAvailable) {
-      result = isModuleVulnerable(modules[i].deviceType, String(modules[i].productName),
+      result = isModuleVulnerable(logger, modules[i].deviceType, String(modules[i].productName),
                                   modules[i].majorRevision,
                                   modules[i].minorRevision) ? "YES" : "NO";
     } else {
@@ -957,6 +1015,15 @@ void LanScanner::setModuleVulnerability(DeviceModule* modules, uint8_t count) {
     }
     strncpy(modules[i].isVulnerable, result, sizeof(modules[i].isVulnerable) - 1);
     modules[i].isVulnerable[sizeof(modules[i].isVulnerable) - 1] = '\0';
+
+    if (DEBUG) {
+      char dbg[160];
+      snprintf(dbg, sizeof(dbg), "[DEBUG] Module vuln result: slot %u \"%s\" fw %u.%u => %s",
+               (unsigned)modules[i].slot, modules[i].productName,
+               (unsigned)modules[i].majorRevision, (unsigned)modules[i].minorRevision,
+               modules[i].isVulnerable);
+      logger->safePrintln(dbg);
+    }
   }
 }
 
