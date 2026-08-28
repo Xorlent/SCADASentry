@@ -270,7 +270,7 @@ Every trap also carries the standard `sysUpTime.0` (TimeTicks) and `snmpTrapOID.
 - It is recommended you exempt the SCADASentry device IP addresses in any legitimate vulnerability or network scanners to avoid triggering honeypot alerts.
 - If ICMP is disabled in Config.h, the device will respond to pings from any IP address within the routable network.
 - LAN device discovery scans the local subnet using ARP, so it only sees devices on the same L2 segment.
-- Pressing the button on the side of the Unit-PoE-P4 clears all detected-device and holdoff state when held for at least 1 second, restarting detection as if the device had just booted.
+- Pressing the button on the side of the Unit-PoE-P4 for > 1 second clears all detected-device and holdoff state, restarting detection as if the device had just booted.
 
 ## Technical Information
 - CPU and Memory
