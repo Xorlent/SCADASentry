@@ -1,6 +1,8 @@
 /*
  * Config.h
  * 
+ * USE AT YOUR OWN RISK. This solution is not recommended where a malfunction could carry injury, life, or financial risk.
+ * 
  * Configuration settings for SCADASentry
  * Edit the values in this file to customize your honeypot deployment
  * 
