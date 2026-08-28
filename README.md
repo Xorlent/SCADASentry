@@ -99,7 +99,7 @@ The device periodically probes the local LAN for a DHCP server and verifies Inte
 SCADASentry can determine whether a discovered ControlLogix CPU or Ethernet module is running firmware with known vulnerabilities. It uses DNS TXT records, so it works using your own DNS infrastructure in a disconnected environment.
 
 ### How it works
-1. For each module, the device extracts the full catalog suffix from the product name (e.g. `1756-EN2T/B` -> `EN2T/B`, `1756-L55/A ...` -> `L55/A`) and converts it to a valid DNS label (`/` becomes `-`, e.g. `EN2T/B` -> `EN2T-B`).
+1. For each module, the device extracts the full catalog suffix from the product name (e.g. `1756-EN2T/B` -> `EN2T/B`, `1756-L55/A` -> `L55/A`) and converts it to a valid DNS label (`/` becomes `-`, e.g. `EN2T/B` -> `EN2T-B`).
 2. It prepends that label to `vulnSearchSuffix` (Config.h) to form the TXT record name, e.g. `EN2T-B.vuln.plc.local`.
 3. It queries the configured DNS servers (`dns1`, then `dns2`) for a TXT record at that name.
 
