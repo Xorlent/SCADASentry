@@ -549,7 +549,7 @@ void setup() {
   // Start NTP
   ntp.begin(ntpSvr);
   ntp.updateInterval(3600000);
-  /*
+  
   // Wait for initial NTP sync
   Serial.println("Waiting for NTP sync...");
   while(!ntp.update())
@@ -557,7 +557,7 @@ void setup() {
     Serial.println("NTP retry...");
     delay(500);
   };
-*/
+  
   lastNTP = millis();
   Serial.print("NTP synchronized: ");
   Serial.print(ntp.formattedTime("%b %d %T "));
