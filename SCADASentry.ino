@@ -1,6 +1,8 @@
 /*
  * SCADASentry.ino
  * 
+ * USE AT YOUR OWN RISK. This solution is not recommended where a malfunction could carry injury, life, or financial risk.
+ * 
  * GNU GENERAL PUBLIC LICENSE Version 3, 29 June 2007
  * https://github.com/Xorlent/SCADASentry
  * 
