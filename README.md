@@ -45,7 +45,7 @@ This device was designed specifically for monitoring Allen Bradley ControlLogix 
 
 ## Requirements
 1. M5Stack [Unit-PoE-P4](https://shop.m5stack.com/products/unit-poe-with-esp32-p4), currently $21.50 USD
-2. PoE network port or PoE power injector or a USB charger to power the device once programmed
+2. PoE network port or PoE power injector or a USB charger to power the device once deployed
 3. USB-C cable for programming
 4. An SNMP trap receiver (NMS such as PRTG) or an available SMTP relay
 5. An accessible NTP server for time synchronization
