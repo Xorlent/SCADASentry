@@ -2,7 +2,7 @@
 ### Ultra low-cost, no maintenance, purpose-built Allen Bradley ControlLogix PLC network and vulnerability monitor ###
 
 > [!WARNING]
-> _USE AT YOUR OWN RISK._  This freely-available solution is not recommended where a malfunction could carry injury, life, or financial risk.
+> _USE AT YOUR OWN RISK._  This solution is not recommended where a malfunction could carry injury, life, or financial risk.
 > 
 ![SCADASentry Sensor Image](https://github.com/Xorlent/SCADASentry/blob/main/images/SCADASentry.jpg)
 
