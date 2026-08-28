@@ -1,5 +1,9 @@
 ## SCADASentry - SCADA PLC Network Monitoring for the Rest of Us
 ### Ultra low-cost, no maintenance, purpose-built Allen Bradley ControlLogix PLC network and vulnerability monitor ###
+
+> [!WARNING]
+> _USE AT YOUR OWN RISK._  This freely-available solution is not recommended where a malfunction would carry injury, life, or financial risk.
+> 
 ![SCADASentry Sensor Image](https://github.com/Xorlent/SCADASentry/blob/main/images/SCADASentry.jpg)
 
 ## Table of Contents
