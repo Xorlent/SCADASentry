@@ -5,7 +5,7 @@
 - Qty. 1 M4 flathead screw (8mm recommended, up to 12mm will work)
 - Qty. 1 M4 nut
 ### Assembly
-- Print parts in the orientation shown below; add a 4-5 mm brim to the DIN clip to prevent print failure
+- Print parts in the orientation shown below; add a 4-5 mm outer brim to the DIN clip only to prevent print failure
 - Place the paper clamp handle into the DIN clip part, insert into the DIN mount, and secure with the 3mm x 10mm pan head screw
 - Install the DIN base in the desired orientation (vertical or horizontal), insert the M4 screw and clamp the parts together with the M4 nut
 - Slide the Unit-PoE-P4 module into the base, Ethernet port first and closest to the face of the base
