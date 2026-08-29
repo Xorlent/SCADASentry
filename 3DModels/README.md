@@ -13,5 +13,5 @@
 ![DIN Assembly](https://github.com/Xorlent/SCADASentry/blob/main/images/SCADASentry-DIN.png)
 ![DIN Print Orientation](https://github.com/Xorlent/SCADASentry/blob/main/images/SCADASentry-DIN-Print.png)
 
-## 1RU Rackmount Printable SCADASentry Base
+## Printable 1RU Rackmount SCADASentry Base
 ![1RU Rackmount Base Image](https://github.com/Xorlent/SCADASentry/blob/main/images/SCADASentry-1U.png)
