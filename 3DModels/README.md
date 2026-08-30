@@ -1,6 +1,6 @@
 ## Printable DIN Rail SCADASentry Mount
 ### Parts Needed
-- Qty. 1.25" Paper Clamp per each 2 SCADASentry mounts (uses a clip handle)
+- Qty. 1.25" Paper Clamp per each 2 SCADASentry mounts (each uses one clip handle)
 - Qty. 1 3mm x 10mm pan head screw
 - Qty. 1 M4 flathead screw (8mm recommended, up to 12mm will work)
 - Qty. 1 M4 nut
