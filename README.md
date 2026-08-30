@@ -30,6 +30,7 @@
   - [Device object varbinds](#device-object-varbinds)
   - [Enumerated varbinds (translated by the MIB)](#enumerated-varbinds-translated-by-the-mib)
 - [Guidance and Notes](#guidance-and-notes)
+- [Installation Options](#installation-options)
 - [Technical Information](#technical-information)
 
 ## Background
@@ -271,6 +272,9 @@ Every trap also carries the standard `sysUpTime.0` (TimeTicks) and `snmpTrapOID.
 - If ICMP is disabled in Config.h, the device will respond to pings from any IP address within the routable network.
 - LAN device discovery scans the local subnet using ARP, so it only sees devices on the same L2 segment.
 - Pressing the button on the side of the Unit-PoE-P4 for > 1 second clears all detected-device and holdoff state, restarting detection as if the device had just booted.
+
+## Installation Options
+- You can find 3D printable DIN rail and 1RU mount options [here](https://github.com/Xorlent/SCADASentry/tree/main/3DModels)
 
 ## Technical Information
 - CPU and Memory
