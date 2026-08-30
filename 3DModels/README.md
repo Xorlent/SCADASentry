@@ -10,6 +10,7 @@
 - Install the DIN base in the desired orientation (vertical or horizontal), insert the M4 screw and clamp the parts together with the M4 nut
 - Slide the Unit-PoE-P4 module into the base, Ethernet port first and closest to the face of the base
 - Install the mount by pulling back on the clip handle and clipping the mount onto the rail, pushing in the clip to secure the module
+
 ![DIN Assembly](https://github.com/Xorlent/SCADASentry/blob/main/images/SCADASentry-DIN.png)
 ![DIN Print Orientation](https://github.com/Xorlent/SCADASentry/blob/main/images/SCADASentry-DIN-Print.png)
 
