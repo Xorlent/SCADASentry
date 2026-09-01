@@ -146,7 +146,7 @@ When a lookup cannot be completed (no TXT record, DNS timeout, or an unparseable
 
 ### When it runs
 - DNS availability is checked at the start of every LAN scan.
-- Vulnerability status is evaluated when a device is first discovered and re-evaluated on every status check (`LAN_STATUS_CHECK_MULTIPLIER` in Config.h, default hourly), so newly published advisories are picked up automatically.
+- Vulnerability status is evaluated when a device is first discovered and re-evaluated on every status check (`LAN_STATUS_CHECK_MULTIPLIER` in Config.h, default hourly), so newly published firmware TXT records are picked up automatically.
 
 The per-module vulnerability status is reflected in email alerts - the firmware version is color-coded (green = `NO`, red = `YES`, black = `N/A`) and firmware-change emails use an `ALERT` subject when vulnerable, otherwise `Notice`. The status is also held in memory, like the advisory search URL.
 
