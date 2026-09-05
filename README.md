@@ -41,23 +41,23 @@ SCADASentry takes a different approach. It is a purpose-built, ultra low-cost (~
 This device was designed specifically for monitoring Allen Bradley ControlLogix PLC network environments and is intentionally simple.  If detailed device activity (tag create/delete, program load, etc.) is needed, a commercial OT/SCADA platform is likely the better choice.
 
 ## Features
-- **Passive honeypot monitoring**
+- **Passive honeypot monitoring**:
   Listens on any number of user-configurable TCP/UDP ports and ICMP types and reports every unexpected connection, revealing scanning, reconnaissance, and lateral movement that traditional tools miss.
-- **EtherNet/IP discovery detection**
+- **EtherNet/IP discovery detection**:
   Watches UDP ports 44818 and 2222 for RSLogix/RSLinx browse traffic, flagging unauthorized devices attempting to discover and interact with your ControlLogix PLCs.
-- **LAN device inventory**
+- **LAN device inventory**:
   Uses ARP to detect every device that joins or leaves the PLC network and identifies ControlLogix PLCs (vendor, firmware, serial, state, run-switch mode), so unapproved hardware is immediately visible.
-- **Run-switch & firmware change alerts**
+- **Run-switch & firmware change alerts**:
   Continuously re-checks each PLC's run/remote/program mode and firmware revision and alerts on any change, so you immediately notice if a controller was left out of RUN after maintenance or a module was missed during a firmware update sweep.
-- **Firmware vulnerability lookup**
+- **Firmware vulnerability lookup**:
   Cross-references each CPU and communication module's firmware against DNS TXT records to flag controllers running firmware with known CVEs before they can be exploited.
-- **Rogue DHCP / Internet detection**
+- **Rogue DHCP / Internet detection**:
   Flags unexpected DHCP servers or Internet reachability on the PLC network, exposing rogue devices or a dangerous bridge between your OT network and the outside world.
-- **Minimal PLC impact**
+- **Minimal PLC impact**:
   Sweeps with throttled ARP (never ICMP) and queries only the data it needs, keeping its footprint on the network and on production controllers as small as possible.
-- **No-nonsense alerting**
+- **No-nonsense alerting**:
   Reports only the events that matter via standard SNMPv2c traps or email, integrating with your existing systems and reducing alert fatigue.
-- **Ultra low-cost & zero-maintenance**
+- **Ultra low-cost & zero-maintenance**:
   A ~$21.50 PoE device requiring no servers, span ports, agent software, cloud dependency, or tuning, making enterprise-grade OT monitoring practical even for smaller environments.
 
 ## Requirements
