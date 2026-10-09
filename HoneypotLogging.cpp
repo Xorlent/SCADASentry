@@ -9,6 +9,7 @@
 
 #include "HoneypotLogging.h"
 #include "SNMPTrap.h"
+#include <stdarg.h>
 
 // SNMP trap OID constants (enterprise root 1.3.6.1.4.1.99999)
 static const uint32_t OID_HONEYPOT_SOURCE_IP[]    = {1,3,6,1,4,1,99999,1,1,0};
@@ -103,6 +104,21 @@ static const char* internetMethodName(int32_t m) {
     case 2: return "DNS query";
     default: return "none";
   }
+}
+
+// Append formatted text to a fixed-size buffer, clamping so the offset never
+// exceeds bufsz - 1 (subsequent calls become no-ops once full).
+static void appendTo(char* buf, size_t bufsz, int* pos, const char* fmt, ...) {
+  if (bufsz == 0) return;
+  if (*pos < 0) *pos = 0;
+  if ((size_t)*pos >= bufsz - 1) return;   // full
+  va_list args;
+  va_start(args, fmt);
+  int n = vsnprintf(buf + *pos, bufsz - (size_t)*pos, fmt, args);
+  va_end(args);
+  if (n < 0) return;                       // encoding error
+  if ((size_t)*pos + (size_t)n >= bufsz) *pos = (int)(bufsz - 1);
+  else *pos += n;
 }
 
 // Constructor
@@ -908,7 +924,8 @@ void HoneypotLogging::sendNewDeviceTrap(IPAddress deviceIp, const uint8_t mac[6]
         snprintf(modeHtml, sizeof(modeHtml), "<b style=\"color:red\">NOT IN RUN</b>");
       }
 
-      int len = snprintf(body, sizeof(body),
+      int len = 0;
+      appendTo(body, sizeof(body), &len,
                "<html><body>"
                "<h3>New PLC discovered</h3>"
                "<table>"
@@ -929,13 +946,13 @@ void HoneypotLogging::sendNewDeviceTrap(IPAddress deviceIp, const uint8_t mac[6]
                serial,
                deviceStateName(state), modeHtml);
 
-      for (uint8_t i = 0; i < moduleCount; i++) {
+      for (uint8_t i = 0; i < moduleCount && i < MAX_TRAP_MODULES; i++) {
         const DeviceModuleEmailInfo& m = modules[i];
         const char* typeStr = (m.deviceType == 0x0E) ? "CPU" : "Ethernet";
         // 0xFF is the sentinel for the directly-connected Ethernet bridge (see
         // SLOT_DIRECT_BRIDGE); its backplane slot is not exposed.
         if (m.slot == 0xFF) {
-          len += snprintf(body + len, sizeof(body) - len,
+          appendTo(body, sizeof(body), &len,
                    "<tr><td>Ethernet bridge (direct)</td><td>%s</td>"
                    "<td><b style=\"color:%s\">%u.%u</b></td>"
                    "<td><a href=\"%s\">CVE search</a></td></tr>",
@@ -944,7 +961,7 @@ void HoneypotLogging::sendNewDeviceTrap(IPAddress deviceIp, const uint8_t mac[6]
                    (unsigned)m.majorRevision, (unsigned)m.minorRevision,
                    m.advisoryUrl);
         } else {
-          len += snprintf(body + len, sizeof(body) - len,
+          appendTo(body, sizeof(body), &len,
                    "<tr><td>Slot %u (%s)</td><td>%s</td>"
                    "<td><b style=\"color:%s\">%u.%u</b></td>"
                    "<td><a href=\"%s\">CVE search</a></td></tr>",
@@ -954,7 +971,7 @@ void HoneypotLogging::sendNewDeviceTrap(IPAddress deviceIp, const uint8_t mac[6]
                    m.advisoryUrl);
         }
       }
-      len += snprintf(body + len, sizeof(body) - len, "</table></body></html>");
+      appendTo(body, sizeof(body), &len, "</table></body></html>");
     } else {
       snprintf(body, sizeof(body),
                "Honeypot: %s (%d.%d.%d.%d)\n"
@@ -1492,7 +1509,8 @@ void HoneypotLogging::sendInternetDetectedTrap(IPAddress gatewayIp, IPAddress dh
     snprintf(subject, sizeof(subject), "[%s ALERT] PLC LAN direct Internet access detected!", (const char*)hostname);
 
     char body[640];
-    int len = snprintf(body, sizeof(body),
+    int len = 0;
+    appendTo(body, sizeof(body), &len,
              "Honeypot: %s (%d.%d.%d.%d)\n"
              "Timestamp: %s UTC\n"
              "Gateway: %d.%d.%d.%d\n",
@@ -1503,12 +1521,12 @@ void HoneypotLogging::sendInternetDetectedTrap(IPAddress gatewayIp, IPAddress dh
     // Only include the DHCP server when the successful test used the
     // DHCP-advertised gateway (dhcpServerIp is 0.0.0.0 otherwise).
     if (dhcpServerIp != IPAddress(0, 0, 0, 0)) {
-      len += snprintf(body + len, sizeof(body) - len,
-                      "DHCP server: %d.%d.%d.%d\n",
-                      dhcpServerIp[0], dhcpServerIp[1], dhcpServerIp[2], dhcpServerIp[3]);
+      appendTo(body, sizeof(body), &len,
+               "DHCP server: %d.%d.%d.%d\n",
+               dhcpServerIp[0], dhcpServerIp[1], dhcpServerIp[2], dhcpServerIp[3]);
     }
 
-    len += snprintf(body + len, sizeof(body) - len,
+    appendTo(body, sizeof(body), &len,
              "Internet access: %s\n"
              "Detection method: %s\n",
              internetAccessible ? "accessible" : "not accessible",
