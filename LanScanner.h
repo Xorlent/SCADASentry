@@ -81,7 +81,7 @@ private:
   IPAddress networkAddr;
   IPAddress broadcastAddr;
 
-  DeviceEntry devices[MAX_DEVICES];
+  DeviceEntry* devices;
   int deviceCount;
 
   uint32_t scanCount;

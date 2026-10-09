@@ -14,6 +14,7 @@
 #include <lwip/etharp.h>
 #include <esp_timer.h>
 #include <esp_system.h>
+#include <esp_heap_caps.h>
 
 // ARP probe timeout per host (ms)
 #define ARP_TIMEOUT_MS 100
@@ -522,22 +523,23 @@ LanScanner::LanScanner(HoneypotLogging* logger, IPAddress localIP, IPAddress gat
   scanCount = 0;
   resetRequested = false;
   isDNSAvailable = false;
+  devices = nullptr;
 }
 
 void LanScanner::begin() {
+  // Allocate and init device info buffer
+  devices = (DeviceEntry*)heap_caps_malloc(MAX_DEVICES * sizeof(DeviceEntry), MALLOC_CAP_SPIRAM);
+  if (devices == nullptr) {
+    devices = (DeviceEntry*)malloc(MAX_DEVICES * sizeof(DeviceEntry));
+  }
+  if (devices != nullptr) {
+    memset(devices, 0, MAX_DEVICES * sizeof(DeviceEntry));
+  }
+
   // Compute network and broadcast addresses
   for (int i = 0; i < 4; i++) {
     networkAddr[i] = localIP[i] & subnetMask[i];
     broadcastAddr[i] = (localIP[i] & subnetMask[i]) | (~subnetMask[i] & 0xFF);
-  }
-  // Initialize device list
-  for (int i = 0; i < MAX_DEVICES; i++) {
-    devices[i].ip = IPAddress(0, 0, 0, 0);
-    devices[i].hasMac = false;
-    devices[i].isPlc = false;
-    devices[i].hasStatus = false;
-    devices[i].moduleCount = 0;
-    devices[i].highestSlot = 0;
   }
 }
 
