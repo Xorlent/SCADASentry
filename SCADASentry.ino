@@ -98,7 +98,8 @@ inline bool isBitSetInBitmap(const uint8_t* bitmap, uint16_t port) {
 
 // SNMP trap and NTP clients
 WiFiUDP snmpUdp;
-NTP ntp(snmpUdp);
+WiFiUDP ntpUdp;
+NTP ntp(ntpUdp);
 
 // Logging system
 HoneypotLogging logger(hostName, ip, snmpTrapSvr, snmpTrapPort, snmpCommunity, DEBUG, 
