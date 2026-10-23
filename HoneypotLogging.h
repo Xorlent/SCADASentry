@@ -55,6 +55,7 @@ struct LogQueueEntry {
   uint32_t sourceIP;
   ProtocolType protocol;
   uint8_t ianaProtocol;
+  uint8_t tcpFlags;      // TCP flag byte for EVT_TCP_CONN (masked to 0x3F); 0 otherwise
   const char* serviceName;
   bool valid;
 };
@@ -112,11 +113,6 @@ private:
 
   // FreeRTOS mutex for serializing SNMP trap sends (shared with the LAN scanner task)
   SemaphoreHandle_t trapMutex;
-
-  // FreeRTOS mutex held while the default gateway is temporarily changed for
-  // Internet detection. SNMP/SMTP sends block on this mutex so they are
-  // deferred (not misrouted or lost) until the gateway is restored.
-  SemaphoreHandle_t gatewayMutex;
 
   // FreeRTOS mutex guarding the holdoff tracking arrays (tcpIPLog/udpIPLog/
   // icmpIPLog), which are accessed from both the main loop and the scanner task.
@@ -192,13 +188,13 @@ public:
   bool queueEmail(const char* subject, const char* body, bool isHtml = false);
   
   // Event queuing (lwIP task context, uses critical sections)
-  bool enqueueLogEvent(EventType eventType, uint16_t portOrType, uint32_t sourceIP, ProtocolType protocol, uint8_t ianaProtocol, const char* serviceName = "unknown");
+  bool enqueueLogEvent(EventType eventType, uint16_t portOrType, uint32_t sourceIP, ProtocolType protocol, uint8_t ianaProtocol, const char* serviceName = "unknown", uint8_t tcpFlags = 0);
   
   // Event processing (main loop)
   void processLogQueue(IPAddress localIP, IPAddress subnetMask);
   
   // Logging
-  void logEvent(EventType eventType, uint16_t portOrType, IPAddress sourceIP, uint8_t ianaProtocol, const char* serviceName = "unknown");
+  void logEvent(EventType eventType, uint16_t portOrType, IPAddress sourceIP, uint8_t ianaProtocol, const char* serviceName = "unknown", uint8_t tcpFlags = 0);
 
   // Device lifecycle notification (boot / power recovery or link recovery)
   void sendDeviceOnlineTrap(DeviceOnlineReason reason);
@@ -223,15 +219,9 @@ public:
   void sendInternetDetectedTrap(IPAddress gatewayIp, IPAddress dhcpServerIp,
                                 bool internetAccessible, int32_t detectionMethod);
 
-  // Rogue DHCP server notification (a DHCP server advertised a gateway outside
-  // this device's configured subnet).
+  // Rogue DHCP server notification (a DHCP server advertised a gateway
+  // different from the gateway configured in Config.h).
   void sendRogueDhcpTrap(IPAddress dhcpServerIp, IPAddress advertisedGatewayIp);
-
-  // Acquire/release the gateway-change lock. While held, SNMP/SMTP sends block
-  // (defer) until the temporary default-gateway change is complete. Called by
-  // the Internet detection task around its temporary gateway swap.
-  void beginGatewayChange();
-  void endGatewayChange();
 
   // Remove an IP from the holdoff tracking arrays (called when a device disappears)
   void removeIPFromHoldoff(IPAddress ip);

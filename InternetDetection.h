@@ -2,9 +2,10 @@
  * InternetDetection.h
  * 
  * Internet access detection for SCADASentry.
- * Detects a DHCP server on the local LAN (which should not exist on a PLC
- * LAN) and verifies Internet reachability through the gateway, then reports
- * the finding via an SNMP trap through HoneypotLogging.
+ * Probes for a DHCP server on the local LAN, classifies a server that
+ * advertises a gateway different from the configured gateway as rogue, and
+ * verifies Internet reachability through the configured gateway. Reports
+ * findings via SNMP traps through HoneypotLogging.
  *
  * GNU GENERAL PUBLIC LICENSE Version 3, 29 June 2007
  * https://github.com/Xorlent/SCADASentry
@@ -29,10 +30,11 @@ class InternetDetection {
 public:
   InternetDetection(HoneypotLogging* logger, IPAddress gateway);
 
-  // Run one Internet detection cycle: probe for a DHCP server, then verify
-  // Internet reachability through the DHCP-advertised gateway and/or the
-  // configured default gateway (TCP connect, falling back to a DNS query).
-  // Sends an internetDetectedTrap when Internet access is detected.
+  // Run one Internet detection cycle: probe for a DHCP server and classify a
+  // server that advertises a gateway different from the configured gateway as
+  // rogue. Internet reachability is verified only through the configured
+  // gateway (TCP connect, falling back to a DNS query). Sends an
+  // internetDetectedTrap when Internet access is detected.
   bool runDetection();
 
 private:
@@ -53,15 +55,6 @@ private:
   // Test Internet reachability through the current default route. On success,
   // fills method with the method that succeeded and returns true.
   bool testInternet(InternetDetectionMethod& method);
-
-  // Test Internet reachability through a specific gateway by temporarily
-  // changing the default route, then restoring it.
-  bool testInternetThroughGateway(IPAddress gw, InternetDetectionMethod& method);
-
-  // Returns true if `a` is within this device's statically-configured subnet
-  // (read from the active netif). Used to detect a rogue DHCP server that
-  // advertises an out-of-subnet gateway.
-  bool isInLocalSubnet(IPAddress a);
 };
 
 #endif // INTERNET_DETECTION_H

@@ -28,7 +28,7 @@
 - [SNMP Trap Reference](#snmp-trap-reference)
   - [LAN device discovery traps](#lan-device-discovery-traps)
   - [Device object varbinds](#device-object-varbinds)
-  - [Enumerated varbinds (translated by the MIB)](#enumerated-varbinds-translated-by-the-mib)
+  - [Enumerated and bitmask varbinds (translated by the MIB)](#enumerated-and-bitmask-varbinds-translated-by-the-mib)
 - [Guidance and Notes](#guidance-and-notes)
 - [Installation Options](#installation-options)
 - [Technical Information](#technical-information)
@@ -42,7 +42,7 @@ This device was designed specifically for monitoring Allen Bradley ControlLogix 
 
 ## Features
 - **Passive honeypot monitoring**:
-  Listens on any number of user-configurable TCP/UDP ports and ICMP types and reports every unexpected connection, revealing scanning, reconnaissance, and lateral movement that traditional tools miss.
+  Listens on any number of user-configurable TCP/UDP ports and ICMP types, reporting connection attempts and NULL/FIN/XMAS scan probes, UDP traffic, and ICMP requests - revealing scanning, reconnaissance, and lateral movement that traditional tools miss.
 - **EtherNet/IP discovery detection**:
   Watches UDP ports 44818 and 2222 for RSLogix/RSLinx browse traffic, flagging unauthorized devices attempting to discover and interact with your ControlLogix PLCs.
 - **LAN device inventory**:
@@ -52,7 +52,7 @@ This device was designed specifically for monitoring Allen Bradley ControlLogix 
 - **Firmware vulnerability lookup**:
   Cross-references each CPU and communication module's firmware against DNS TXT records to flag controllers running firmware with known CVEs before they can be exploited.
 - **Rogue DHCP / Internet detection**:
-  Flags unexpected DHCP servers or Internet reachability on the PLC network, exposing rogue devices or a dangerous bridge between your OT network and the outside world.
+  Flags DHCP servers that advertise a gateway different from the configured one, and Internet reachability on the PLC network, exposing rogue devices or a dangerous bridge between your OT network and the outside world.
 - **Minimal PLC impact**:
   Sweeps with throttled ARP (never ICMP) and queries only the data it needs, keeping its footprint on the network and on production controllers as small as possible.
 - **No-nonsense alerting**:
@@ -71,11 +71,12 @@ This device was designed specifically for monitoring Allen Bradley ControlLogix 
 SCADASentry is a honeypot that listens on any number of user-configurable TCP and UDP ports and reports activity via **SNMPv2c traps** (or email via SMTP). It detects devices joining and leaving the local PLC LAN, alerts on scanning, reconnaissance, and lateral movement, and reports basic ControlLogix device information - notifying on run-key or firmware version changes.
 
 ### Activity monitoring
-When unexpected activity is detected, the device immediately sends a trap or email containing the source IP, protocol, destination port (or ICMP type), and service name. The following events are reported:
+When unexpected activity is detected, the device immediately sends a trap or email containing the source IP, protocol, destination port (or ICMP type), service name, and, for TCP events, the TCP flag byte. The following events are reported:
 
 | Event | Trap |
 |-------|------|
-| TCP connection on a monitored port | `tcpConnectionTrap` |
+| TCP connection attempt on a monitored port | `tcpConnectionTrap` |
+| TCP scan probe on a monitored port (NULL, FIN, XMAS, or invalid flag combination) | `tcpConnectionTrap` |
 | UDP packet on a monitored port | `udpConnectionTrap` |
 | ICMP request of a monitored type | `icmpRequestTrap` |
 | Fragmented IP packet (suspicious) | `ipFragmentTrap` |
@@ -107,10 +108,11 @@ SCADASentry is designed to be a passive observer of production PLCs, so it goes 
 ### Internet and DHCP detection
 The device periodically probes the local LAN for a DHCP server and verifies Internet reachability:
 
-- It retrieves the DHCP server identifier and the advertised default gateway, then tests Internet reachability through that gateway and/or the configured default gateway (a TCP connection to a public anycast IP on port 443, falling back to a DNS query to a public resolver).
-- When Internet access is detected, it reports `internetDetectedTrap`, including the gateway and any DHCP server found.
+- It retrieves the DHCP server identifier and the advertised default gateway (option 3) from the DHCPOFFER.
+- A DHCP server that advertises a default gateway different from the gateway configured in `Config.h` is reported as a rogue DHCP server via `rogueDhcpServerTrap`, including the server IP and the advertised gateway. The device never probes or sends traffic through that gateway.
+- Internet reachability is tested only through the statically configured gateway - a TCP connection to a public anycast IP on port 443, falling back to a DNS query to a public resolver. If the test succeeds, the device reports `internetDetectedTrap` with the configured gateway; the DHCP server is included in that trap only when it advertised the same gateway as the configured one.
 - The DHCP probe sends only a DHCPDISCOVER, so it does not obtain or reserve an IP address - the device always keeps its statically-configured IP.
-- If a DHCP server advertises a default gateway outside the device's configured subnet, the device treats it as a rogue DHCP server: it skips testing that gateway and reports `rogueDhcpServerTrap` (including the rogue server IP and the advertised gateway) instead.
+- A DHCP server that advertises the configured gateway, or no gateway at all, is not flagged as rogue.
 
 ## Firmware Vulnerability Lookup
 SCADASentry can determine whether a discovered ControlLogix CPU or Ethernet module is running firmware with known vulnerabilities. It uses DNS TXT records, so it works using your own DNS infrastructure in a disconnected environment.
@@ -213,7 +215,7 @@ Hard resetting via RTS pin...
     - Add alert triggers based on traps received from the device to get immediate notice of potential scanning and lateral movement
     - Example trap for IP 10.70.103.12 connecting to TCP port 443:
       - Trap OID: 1.3.6.1.4.1.99999.0.1 (tcpConnectionTrap)
-      - Varbinds: honeypotSourceIp=10.70.103.12, honeypotProtocol=6, honeypotDestPort=443, honeypotServiceName="https", honeypotEventTime="2026-08-16T21:12:52Z"
+      - Varbinds: honeypotSourceIp=10.70.103.12, honeypotProtocol=6, honeypotDestPort=443, honeypotTcpFlags=2, honeypotServiceName="https", honeypotEventTime="2026-08-16T21:12:52Z"
     - Example trap for IP 10.70.103.12 connecting to UDP port 137:
       - Trap OID: 1.3.6.1.4.1.99999.0.2 (udpConnectionTrap)
       - Varbinds: honeypotSourceIp=10.70.103.12, honeypotProtocol=17, honeypotDestPort=137, honeypotServiceName="netbios-ns"
@@ -225,7 +227,7 @@ All traps are SNMPv2c, sent to UDP port 162 (configurable). Import `SCADASENTRY-
 
 | Trap | OID | Varbinds |
 |------|-----|----------|
-| `tcpConnectionTrap` | `1.3.6.1.4.1.99999.0.1` | eventTime, sourceIp, protocol, destPort, serviceName |
+| `tcpConnectionTrap` | `1.3.6.1.4.1.99999.0.1` | eventTime, sourceIp, protocol, destPort, tcpFlags, serviceName |
 | `udpConnectionTrap` | `1.3.6.1.4.1.99999.0.2` | eventTime, sourceIp, protocol, destPort, serviceName |
 | `icmpRequestTrap` | `1.3.6.1.4.1.99999.0.3` | eventTime, sourceIp, protocol, icmpType, serviceName |
 | `ipFragmentTrap` | `1.3.6.1.4.1.99999.0.4` | eventTime, sourceIp, protocol, serviceName |
@@ -269,11 +271,12 @@ Every trap also carries the standard `sysUpTime.0` (TimeTicks) and `snmpTrapOID.
 | `.1.25.1.5` | `moduleFirmware` | OCTET STRING |
 | `.1.25.1.6` | `modulePreviousFirmware` | OCTET STRING |
 
-### Enumerated varbinds (translated by the MIB)
+### Enumerated and bitmask varbinds (translated by the MIB)
 
 - `honeypotProtocol`: `icmp(1)`, `tcp(6)`, `udp(17)`
 - `honeypotStartReason`: `powerOn(1)`, `linkUp(2)`
 - `honeypotIcmpType`: `ping(8)`, `pingExtended(42)`
+- `honeypotTcpFlags`: bitmask of `fin(1)`, `syn(2)`, `rst(4)`, `psh(8)`, `ack(16)`, `urg(32)`, masked to `0x3F`
 - `deviceState`: `nonexistent(0)`, `selfTesting(1)`, `standby(2)`, `operational(3)`, `majorRecoverableFault(4)`, `majorUnrecoverableFault(5)`, `communicationFault(6)`, `unconfigured(7)`
 - `deviceMode`: `program(0)`, `run(1)`, `testRemote(2)`
 - `moduleType`: `cpu(14)`, `ethernet(12)`
@@ -283,6 +286,8 @@ Every trap also carries the standard `sysUpTime.0` (TimeTicks) and `snmpTrapOID.
 ## Guidance and Notes
 - The device produces SNMPv2c traps on UDP port 162 (community string configurable in Config.h).
 - SMTP alerts require an unauthenticated SMTP relay that is configured to allow the SCADASentry device IP address.
+- TCP scan detection covers connection attempts (SYN) and stateless probes with NULL, FIN, XMAS, or invalid flag combinations; ACK/window scans are not detected because ACK-only traffic is normal on the device's own outbound connections.
+- Honeypot alerts are held off per source IP and protocol (default 3600 seconds, configurable in Config.h); repeat activity from the same IP within the window - including a different TCP scan type - is not re-reported.
 - TCP and UDP listening ports are fully user-configurable with no constraints.
 - It is recommended you exempt the SCADASentry device IP addresses in any legitimate vulnerability or network scanners to avoid triggering honeypot alerts.
 - If ICMP is disabled in Config.h, the device will respond to pings from any IP address within the routable network.

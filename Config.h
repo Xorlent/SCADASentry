@@ -168,11 +168,14 @@ const bool DEBUG = true;
 ////////// Internet Detection Configuration //////////
 
     // Detects Internet access on the local LAN.
-    // Internet access is identified by (1) a DHCP server responding on the segment
-    // (which generally should not exist on a PLC LAN) and (2) Internet reachability
-    // through the gateway. Reports via the internetDetectedTrap SNMP trap.
-    // A DHCP server that advertises a gateway outside this device's configured
-    // subnet is treated as rogue and reported via the rogueDhcpServerTrap.
+    // Internet reachability is tested only through the gateway configured above
+    // (a TCP connection to a public anycast IP on port 443, falling back to a
+    // DNS query). Reports via the internetDetectedTrap SNMP trap.
+    // A DHCP server that advertises a default gateway different from the
+    // gateway configured above is treated as rogue and reported via the
+    // rogueDhcpServerTrap; its advertised gateway is never used. A DHCP server
+    // that advertises the configured gateway is not flagged, but is included in
+    // internetDetectedTrap when Internet access is detected.
     // See README.md "SNMP Trap Reference" for the trap OIDs.
 
     // Enable Internet detection

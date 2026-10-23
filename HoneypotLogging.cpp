@@ -17,6 +17,7 @@ static const uint32_t OID_HONEYPOT_PROTOCOL[]     = {1,3,6,1,4,1,99999,1,2,0};
 static const uint32_t OID_HONEYPOT_DEST_PORT[]    = {1,3,6,1,4,1,99999,1,3,0};
 static const uint32_t OID_HONEYPOT_SERVICE_NAME[] = {1,3,6,1,4,1,99999,1,4,0};
 static const uint32_t OID_HONEYPOT_ICMP_TYPE[]    = {1,3,6,1,4,1,99999,1,5,0};
+static const uint32_t OID_HONEYPOT_TCP_FLAGS[]    = {1,3,6,1,4,1,99999,1,26,0};
 static const uint32_t OID_HONEYPOT_EVENT_TIME[]   = {1,3,6,1,4,1,99999,1,19,0};
 static const uint32_t OID_HONEYPOT_START_REASON[] = {1,3,6,1,4,1,99999,1,20,0};
 
@@ -164,7 +165,6 @@ HoneypotLogging::HoneypotLogging(const uint8_t* hostName, IPAddress localIP, IPA
   // Initialize mutex handles (created later in begin())
   serialMutex = NULL;
   trapMutex = NULL;
-  gatewayMutex = NULL;
   holdoffMutex = NULL;
 }
 
@@ -194,12 +194,6 @@ HoneypotLogging::~HoneypotLogging() {
     trapMutex = NULL;
   }
   
-  // Delete gateway-change mutex if created
-  if (gatewayMutex != NULL) {
-    vSemaphoreDelete(gatewayMutex);
-    gatewayMutex = NULL;
-  }
-  
   // Delete holdoff mutex if created
   if (holdoffMutex != NULL) {
     vSemaphoreDelete(holdoffMutex);
@@ -214,9 +208,6 @@ void HoneypotLogging::begin() {
   
   // Create mutex for serializing SNMP trap sends
   trapMutex = xSemaphoreCreateMutex();
-
-  // Create mutex guarding temporary default-gateway changes
-  gatewayMutex = xSemaphoreCreateMutex();
 
   // Create mutex guarding the holdoff tracking arrays
   holdoffMutex = xSemaphoreCreateMutex();
@@ -240,28 +231,13 @@ void HoneypotLogging::begin() {
   beginSMTPTask();
 }
 
-// Acquire the gateway-change lock. While held, SNMP/SMTP sends block (defer)
-// until the temporary default-gateway change is complete.
-void HoneypotLogging::beginGatewayChange() {
-  xSemaphoreTake(gatewayMutex, portMAX_DELAY);
-}
-
-// Release the gateway-change lock, allowing deferred SNMP/SMTP sends to proceed.
-void HoneypotLogging::endGatewayChange() {
-  xSemaphoreGive(gatewayMutex);
-}
-
 // Send an SNMP trap under the trap mutex (thread-safe across tasks).
-// Blocks on the gateway-change lock so traps are deferred (not misrouted)
-// while the default gateway is temporarily changed.
 void HoneypotLogging::sendTrap(const uint32_t* trapOid, size_t trapOidLen,
                                const SnmpVarbind* varbinds, size_t varbindCount) {
-  xSemaphoreTake(gatewayMutex, portMAX_DELAY);
   xSemaphoreTake(trapMutex, portMAX_DELAY);
   sendSNMPv2cTrap(*snmpUdp, snmpTrapServer, snmpTrapPort, snmpCommunity,
                   millis() / 10, trapOid, trapOidLen, varbinds, varbindCount);
   xSemaphoreGive(trapMutex);
-  xSemaphoreGive(gatewayMutex);
 }
 
 // Thread-safe Serial functions
@@ -324,12 +300,8 @@ void HoneypotLogging::smtpTask(void* parameter) {
     // Wait for email (blocks this task, not main loop)
     // portMAX_DELAY = wait indefinitely
     if (xQueueReceive(logger->emailQueue, &email, portMAX_DELAY) == pdTRUE) {
-      // Defer until any temporary default-gateway change completes, so the
-      // email is not misrouted or lost.
-      xSemaphoreTake(logger->gatewayMutex, portMAX_DELAY);
       // Send email (blocks this task, main loop continues)
       logger->sendSMTPEmail(email.subject, email.body, email.isHtml);
-      xSemaphoreGive(logger->gatewayMutex);
       
       // Small delay between emails
       vTaskDelay(pdMS_TO_TICKS(10));
@@ -369,7 +341,7 @@ bool HoneypotLogging::queueEmail(const char* subject, const char* body, bool isH
 
 // Enqueue event for main loop processing
 // Called from lwIP task context (not hardware ISR), uses critical sections
-bool HoneypotLogging::enqueueLogEvent(EventType eventType, uint16_t portOrType, uint32_t sourceIP, ProtocolType protocol, uint8_t ianaProtocol, const char* serviceName) {
+bool HoneypotLogging::enqueueLogEvent(EventType eventType, uint16_t portOrType, uint32_t sourceIP, ProtocolType protocol, uint8_t ianaProtocol, const char* serviceName, uint8_t tcpFlags) {
   // SECURITY: Enter critical section to prevent race conditions with processLogQueue
   portENTER_CRITICAL(&queueMux);
   
@@ -387,6 +359,7 @@ bool HoneypotLogging::enqueueLogEvent(EventType eventType, uint16_t portOrType, 
   logQueue[logQueueHead].sourceIP = sourceIP;
   logQueue[logQueueHead].protocol = protocol;
   logQueue[logQueueHead].ianaProtocol = ianaProtocol;
+  logQueue[logQueueHead].tcpFlags = tcpFlags;
   logQueue[logQueueHead].serviceName = serviceName;
   logQueue[logQueueHead].valid = true;
   
@@ -411,6 +384,7 @@ void HoneypotLogging::processLogQueue(IPAddress localIP, IPAddress subnetMask) {
     uint32_t sourceIP_u32 = entry->sourceIP;
     ProtocolType protocol = entry->protocol;
     uint8_t ianaProtocol = entry->ianaProtocol;
+    uint8_t tcpFlags = entry->tcpFlags;
     const char* serviceName = entry->serviceName;
     
     // Mark as processed and advance tail
@@ -446,7 +420,7 @@ void HoneypotLogging::processLogQueue(IPAddress localIP, IPAddress subnetMask) {
       
       // Not in holdoff, log the event
       IPAddress sourceIP(sourceIP_u32);
-      logEvent(eventType, portOrType, sourceIP, ianaProtocol, serviceName);
+      logEvent(eventType, portOrType, sourceIP, ianaProtocol, serviceName, tcpFlags);
     }
   }
 }
@@ -686,7 +660,7 @@ bool HoneypotLogging::sendSMTPEmail(const char* subject, const char* body, bool 
 }
 
 // Build and send SNMP trap (or SMTP email) for an event
-void HoneypotLogging::logEvent(EventType eventType, uint16_t portOrType, IPAddress sourceIP, uint8_t ianaProtocol, const char* serviceName) {
+void HoneypotLogging::logEvent(EventType eventType, uint16_t portOrType, IPAddress sourceIP, uint8_t ianaProtocol, const char* serviceName, uint8_t tcpFlags) {
   // Get wall-clock timestamp (ISO 8601 UTC)
   char eventTimeStr[32];
   const char* timeStr = ntpClient->formattedTime("%Y-%m-%dT%H:%M:%SZ");
@@ -766,7 +740,7 @@ void HoneypotLogging::logEvent(EventType eventType, uint16_t portOrType, IPAddre
 
   // Build varbinds
   uint8_t ipBytes[4] = { sourceIP[0], sourceIP[1], sourceIP[2], sourceIP[3] };
-  SnmpVarbind varbinds[5];
+  SnmpVarbind varbinds[6];
   size_t vbCount = 0;
 
   // honeypotEventTime (OCTET STRING, ISO 8601 UTC)
@@ -803,6 +777,15 @@ void HoneypotLogging::logEvent(EventType eventType, uint16_t portOrType, IPAddre
   varbinds[vbCount].type = SNMP_INTEGER;
   varbinds[vbCount].intValue = portOrType;
   vbCount++;
+
+  // honeypotTcpFlags (INTEGER bitmask; TCP events only)
+  if (eventType == EVT_TCP_CONN) {
+    varbinds[vbCount].oid = OID_HONEYPOT_TCP_FLAGS;
+    varbinds[vbCount].oidLen = sizeof(OID_HONEYPOT_TCP_FLAGS) / sizeof(uint32_t);
+    varbinds[vbCount].type = SNMP_INTEGER;
+    varbinds[vbCount].intValue = tcpFlags & 0x3F;
+    vbCount++;
+  }
 
   // honeypotServiceName (OCTET STRING)
   varbinds[vbCount].oid = OID_HONEYPOT_SERVICE_NAME;
@@ -1518,8 +1501,8 @@ void HoneypotLogging::sendInternetDetectedTrap(IPAddress gatewayIp, IPAddress dh
              eventTimeStr,
              gatewayIp[0], gatewayIp[1], gatewayIp[2], gatewayIp[3]);
 
-    // Only include the DHCP server when the successful test used the
-    // DHCP-advertised gateway (dhcpServerIp is 0.0.0.0 otherwise).
+    // Only include the DHCP server when it advertised the configured gateway
+    // (the gateway actually tested); dhcpServerIp is 0.0.0.0 otherwise.
     if (dhcpServerIp != IPAddress(0, 0, 0, 0)) {
       appendTo(body, sizeof(body), &len,
                "DHCP server: %d.%d.%d.%d\n",
@@ -1585,8 +1568,8 @@ void HoneypotLogging::sendInternetDetectedTrap(IPAddress gatewayIp, IPAddress dh
   sendTrap(OID_TRAP_INTERNET_DETECTED, sizeof(OID_TRAP_INTERNET_DETECTED) / sizeof(uint32_t), varbinds, vbCount);
 }
 
-// Send a rogueDhcpServerTrap when a DHCP server advertises a gateway outside
-// this device's configured subnet (indicating a rogue/malicious DHCP server).
+// Send a rogueDhcpServerTrap when a DHCP server advertises a gateway different
+// from the gateway configured in Config.h (indicating a rogue/malicious server).
 void HoneypotLogging::sendRogueDhcpTrap(IPAddress dhcpServerIp, IPAddress advertisedGatewayIp) {
   char eventTimeStr[32];
   const char* timeStr = ntpClient->formattedTime("%Y-%m-%dT%H:%M:%SZ");

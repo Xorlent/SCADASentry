@@ -2,9 +2,10 @@
  * InternetDetection.cpp
  * 
  * Internet access detection for SCADASentry.
- * Probes for a DHCP server on the local LAN (which should not exist on a
- * PLC LAN) and verifies Internet reachability through the gateway, then
- * reports the finding via an SNMP trap through HoneypotLogging.
+ * Probes for a DHCP server on the local LAN and classifies one that advertises
+ * a gateway different from the configured gateway as rogue. Internet
+ * reachability is verified only through the configured gateway, then reported
+ * via an SNMP trap through HoneypotLogging.
  *
  * GNU GENERAL PUBLIC LICENSE Version 3, 29 June 2007
  * https://github.com/Xorlent/SCADASentry
@@ -15,9 +16,6 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <esp_system.h>
-#include <lwip/netif.h>
-#include <lwip/ip4_addr.h>
-#include <lwip/ip_addr.h>
 
 // DHCP / BOOTP constants
 #define DHCP_CLIENT_PORT        68
@@ -252,40 +250,6 @@ bool InternetDetection::testInternet(InternetDetectionMethod& method) {
   return accessible;
 }
 
-// Test Internet reachability through a specific gateway by temporarily
-// changing the default route, then restoring it.
-bool InternetDetection::testInternetThroughGateway(IPAddress gw, InternetDetectionMethod& method) {
-  if (netif_default == NULL) {
-    return false;
-  }
-
-  // Hold the gateway-change lock so concurrent SNMP/SMTP sends defer until the
-  // default gateway is restored below.
-  logger->beginGatewayChange();
-
-  ip_addr_t savedGw = netif_default->gw;
-  ip4_addr_t testGw;
-  IP4_ADDR(&testGw, gw[0], gw[1], gw[2], gw[3]);
-  netif_set_gw(netif_default, &testGw);
-
-  bool accessible = testInternet(method);
-
-  netif_set_gw(netif_default, ip_2_ip4(&savedGw));
-  logger->endGatewayChange();
-  return accessible;
-}
-
-// Returns true if `a` is within this device's statically-configured subnet
-// (read from the active netif). Used to detect a rogue DHCP server that
-// advertises an out-of-subnet gateway.
-bool InternetDetection::isInLocalSubnet(IPAddress a) {
-  if (netif_default == NULL) return false;
-  uint32_t ipU32   = ip4_addr_get_u32(ip_2_ip4(&netif_default->ip_addr));
-  uint32_t maskU32 = ip4_addr_get_u32(ip_2_ip4(&netif_default->netmask));
-  uint32_t aU32    = ((uint32_t)a[0] << 24) | ((uint32_t)a[1] << 16) | ((uint32_t)a[2] << 8) | (uint32_t)a[3];
-  return (aU32 & maskU32) == (ipU32 & maskU32);
-}
-
 // Run one Internet detection cycle and report via SNMP trap when detected.
 bool InternetDetection::runDetection() {
   // 1. Probe for a DHCP server and its advertised gateway.
@@ -305,68 +269,47 @@ bool InternetDetection::runDetection() {
     }
   }
 
-  // 2. Test Internet reachability. Prefer the DHCP-advertised gateway (if it
-  //    differs from the configured gateway), then fall back to the configured
-  //    gateway.
-  bool internetAccessible = false;
-  InternetDetectionMethod method = INTERNET_METHOD_NONE;
-  IPAddress testedGateway = gateway;
-
+  // 2. Classify the DHCP server. A server that advertises a default gateway
+  //    different from the gateway configured in Config.h is rogue. Its
+  //    advertised gateway is never used for probes or traffic; reachability is
+  //    tested only through the statically configured gateway below.
   if (dhcpDetected && dhcpGateway != IPAddress(0, 0, 0, 0) && dhcpGateway != gateway) {
-    if (!isInLocalSubnet(dhcpGateway)) {
-      // Rogue DHCP server: it advertised a gateway outside our static subnet.
-      // Skip testing through it (unreachable) and alert; fall through to the
-      // configured gateway below.
-      if (DEBUG) {
-        char buf[128];
-        snprintf(buf, sizeof(buf), "[DEBUG] Internet: rogue DHCP server %d.%d.%d.%d advertised out-of-subnet gateway %d.%d.%d.%d",
-                 dhcpServer[0], dhcpServer[1], dhcpServer[2], dhcpServer[3],
-                 dhcpGateway[0], dhcpGateway[1], dhcpGateway[2], dhcpGateway[3]);
-        logger->safePrintln(buf);
-      }
-      logger->sendRogueDhcpTrap(dhcpServer, dhcpGateway);
-    } else {
-      if (DEBUG) {
-        char buf[96];
-        snprintf(buf, sizeof(buf), "[DEBUG] Internet: testing via DHCP gateway %d.%d.%d.%d",
-                 dhcpGateway[0], dhcpGateway[1], dhcpGateway[2], dhcpGateway[3]);
-        logger->safePrintln(buf);
-      }
-      if (testInternetThroughGateway(dhcpGateway, method)) {
-        internetAccessible = true;
-        testedGateway = dhcpGateway;
-      } else if (DEBUG) {
-        char buf[96];
-        snprintf(buf, sizeof(buf), "[DEBUG] Internet: DHCP gateway %d.%d.%d.%d not accessible",
-                 dhcpGateway[0], dhcpGateway[1], dhcpGateway[2], dhcpGateway[3]);
-        logger->safePrintln(buf);
-      }
+    if (DEBUG) {
+      char buf[160];
+      snprintf(buf, sizeof(buf),
+               "[DEBUG] Internet: rogue DHCP server %d.%d.%d.%d advertised gateway %d.%d.%d.%d (configured %d.%d.%d.%d)",
+               dhcpServer[0], dhcpServer[1], dhcpServer[2], dhcpServer[3],
+               dhcpGateway[0], dhcpGateway[1], dhcpGateway[2], dhcpGateway[3],
+               gateway[0], gateway[1], gateway[2], gateway[3]);
+      logger->safePrintln(buf);
     }
+    logger->sendRogueDhcpTrap(dhcpServer, dhcpGateway);
   }
 
-  if (!internetAccessible) {
-    if (DEBUG) {
-      char buf[96];
-      snprintf(buf, sizeof(buf), "[DEBUG] Internet: testing via configured gateway %d.%d.%d.%d",
-               gateway[0], gateway[1], gateway[2], gateway[3]);
-      logger->safePrintln(buf);
-    }
-    if (testInternet(method)) {
-      internetAccessible = true;
-      testedGateway = gateway;
-    } else if (DEBUG) {
-      char buf[96];
-      snprintf(buf, sizeof(buf), "[DEBUG] Internet: configured gateway %d.%d.%d.%d not accessible",
-               gateway[0], gateway[1], gateway[2], gateway[3]);
-      logger->safePrintln(buf);
-    }
+  // 3. Test Internet reachability through the configured gateway.
+  bool internetAccessible = false;
+  InternetDetectionMethod method = INTERNET_METHOD_NONE;
+
+  if (DEBUG) {
+    char buf[96];
+    snprintf(buf, sizeof(buf), "[DEBUG] Internet: testing via configured gateway %d.%d.%d.%d",
+             gateway[0], gateway[1], gateway[2], gateway[3]);
+    logger->safePrintln(buf);
+  }
+  if (testInternet(method)) {
+    internetAccessible = true;
+  } else if (DEBUG) {
+    char buf[96];
+    snprintf(buf, sizeof(buf), "[DEBUG] Internet: configured gateway %d.%d.%d.%d not accessible",
+             gateway[0], gateway[1], gateway[2], gateway[3]);
+    logger->safePrintln(buf);
   }
 
   if (DEBUG) {
     if (internetAccessible) {
       char buf[128];
       snprintf(buf, sizeof(buf), "[DEBUG] Internet: Internet accessible via gateway %d.%d.%d.%d (%s)",
-               testedGateway[0], testedGateway[1], testedGateway[2], testedGateway[3], methodName(method));
+               gateway[0], gateway[1], gateway[2], gateway[3], methodName(method));
       logger->safePrintln(buf);
     } else {
       logger->safePrintln("[DEBUG] Internet: Internet NOT accessible (all methods failed)");
@@ -377,12 +320,12 @@ bool InternetDetection::runDetection() {
     return false;
   }
 
-  // 3. Internet access detected. Report the gateway that provided it and the
-  //    DHCP server only if the successful test used the DHCP-advertised gateway
+  // 4. Internet access detected. The gateway is always the configured one. The
+  //    DHCP server is included only when it advertised that same gateway
   //    (0.0.0.0 otherwise, so the email omits the DHCP server line).
   IPAddress noDhcp(0, 0, 0, 0);
-  bool usedDhcpGateway = dhcpDetected && (testedGateway == dhcpGateway);
-  logger->sendInternetDetectedTrap(testedGateway, usedDhcpGateway ? dhcpServer : noDhcp,
+  bool dhcpMatchesGateway = dhcpDetected && (dhcpGateway == gateway);
+  logger->sendInternetDetectedTrap(gateway, dhcpMatchesGateway ? dhcpServer : noDhcp,
                                    internetAccessible, (int32_t)method);
   return true;
 }

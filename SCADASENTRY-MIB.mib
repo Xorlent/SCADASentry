@@ -68,6 +68,14 @@ honeypotIcmpType OBJECT-TYPE
     DESCRIPTION "ICMP type of the observed traffic."
     ::= { scadaSentryObjects 5 }
 
+honeypotTcpFlags OBJECT-TYPE
+    SYNTAX      Integer32 (0..63)
+    MAX-ACCESS  accessible-for-notify
+    STATUS      current
+    DESCRIPTION "TCP flag bits observed in the probe, masked to 0x3F:
+                 fin(1), syn(2), rst(4), psh(8), ack(16), urg(32)."
+    ::= { scadaSentryObjects 26 }
+
 honeypotEventTime OBJECT-TYPE
     SYNTAX      DisplayString (SIZE (0..32))
     MAX-ACCESS  accessible-for-notify
@@ -169,7 +177,9 @@ internetDhcpServerIp OBJECT-TYPE
     SYNTAX      IpAddress
     MAX-ACCESS  accessible-for-notify
     STATUS      current
-    DESCRIPTION "IP address of the DHCP server detected on the LAN (the gateway)."
+    DESCRIPTION "IP address of the DHCP server detected on the LAN. Included in
+                 internetDetectedTrap only when the server advertised the
+                 configured gateway and Internet access was verified."
     ::= { scadaSentryObjects 21 }
 
 internetAccessible OBJECT-TYPE
@@ -197,7 +207,7 @@ internetGatewayIp OBJECT-TYPE
     SYNTAX      IpAddress
     MAX-ACCESS  accessible-for-notify
     STATUS      current
-    DESCRIPTION "Gateway through which Internet reachability was verified (DHCP-advertised or configured)."
+    DESCRIPTION "Configured gateway through which Internet reachability was verified."
     ::= { scadaSentryObjects 24 }
 
 moduleTable OBJECT-TYPE
@@ -278,9 +288,10 @@ modulePreviousFirmware OBJECT-TYPE
 
 tcpConnectionTrap NOTIFICATION-TYPE
     OBJECTS     { honeypotEventTime, honeypotSourceIp, honeypotProtocol,
-                  honeypotDestPort, honeypotServiceName }
+                  honeypotDestPort, honeypotTcpFlags, honeypotServiceName }
     STATUS      current
-    DESCRIPTION "A TCP connection was observed on a monitored port."
+    DESCRIPTION "A TCP connection attempt or scan probe (NULL, FIN, XMAS, or an
+                 invalid flag combination) was observed on a monitored port."
     ::= { scadaSentryNotifications 1 }
 
 udpConnectionTrap NOTIFICATION-TYPE
@@ -360,7 +371,9 @@ internetDetectedTrap NOTIFICATION-TYPE
 rogueDhcpServerTrap NOTIFICATION-TYPE
     OBJECTS     { honeypotEventTime, internetDhcpServerIp, internetGatewayIp }
     STATUS      current
-    DESCRIPTION "A DHCP server advertised a default gateway outside this device's configured subnet (possible rogue DHCP server)."
+    DESCRIPTION "A DHCP server advertised a default gateway different from this
+                 device's configured gateway (possible rogue DHCP server). The
+                 advertised gateway is never used by the device."
     ::= { scadaSentryNotifications 13 }
 
 -- Reserved notification OIDs for future functionality:
